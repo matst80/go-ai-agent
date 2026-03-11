@@ -14,8 +14,7 @@ import (
 
 // OllamaClient handles interaction with the Ollama API
 type OllamaClient struct {
-	client ai.ApiClient
-	URL    string
+	client *ai.ApiClient
 }
 
 type OllamaEndpoint string
@@ -37,7 +36,7 @@ const (
 
 // NewOllamaClient creates a new Ollama client
 func NewOllamaClient(url string) *OllamaClient {
-	return &OllamaClient{URL: url}
+	return &OllamaClient{client: ai.NewApiClient(url, map[string]string{})}
 }
 
 func (c *OllamaClient) WithAuth(auth string) *OllamaClient {

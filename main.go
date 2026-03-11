@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/matst80/go-ollama-client/pkg/ai"
 	"github.com/matst80/go-ollama-client/pkg/ollama"
+	"github.com/matst80/go-ollama-client/pkg/openrouter"
 	"github.com/matst80/go-ollama-client/pkg/tools"
 )
 
@@ -68,26 +70,27 @@ func PullModel(client *ollama.OllamaClient, model string) error {
 }
 
 func main() {
-	client := ollama.NewOllamaClient("http://localhost:11434")
+	client := openrouter.NewOpenRouterClient("https://openrouter.ai", os.Getenv("OPENROUTER_KEY")).WithLogFile("openrouter.log")
+	//client := ollama.NewOllamaClient("http://localhost:11434")
 	ctx := context.Background()
-	models, err := client.ListModels(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, model := range models.Models {
-		fmt.Printf("%s, (%d MB)\n", model.Model, model.Size/1024/1024)
-	}
-	PullModel(client, "qwen3.5:4b")
+	// models, err := client.ListModels(ctx)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// for _, model := range models.Models {
+	// 	fmt.Printf("%s, (%d MB)\n", model.Model, model.Size/1024/1024)
+	// }
+	// PullModel(client, "qwen3.5:4b")
 
 	registry := tools.NewRegistry()
 	registry.Register("run", &RunArgs{}, RunCommand)
 
-	req := ai.NewChatRequest("qwen3.5:4b").
+	req := ai.NewChatRequest("stepfun/step-3.5-flash:free").
 		WithStreaming(true).
-		WithThinking(true).
-		WithOptions(&ai.ModelOptions{
-			ContextWindowSize: 8192,
-		}).
+		// WithThinking(true).
+		// WithOptions(&ai.ModelOptions{
+		// 	ContextWindowSize: 8192,
+		// }).
 		WithTools(registry.GetTools())
 
 	// Initialize the new AgentSession with the request
