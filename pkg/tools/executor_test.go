@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/matst80/go-ollama-client/pkg/ai"
+	"github.com/matst80/go-ai-agent/pkg/ai"
 )
 
 // These tests exercise the various code paths in ToolExecutor/HandleCalls that

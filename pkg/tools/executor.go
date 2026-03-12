@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/matst80/go-ollama-client/pkg/ai"
+	"github.com/matst80/go-ai-agent/pkg/ai"
 )
 
 // ToolExecutor handles execution of tool calls and delivers the results into a

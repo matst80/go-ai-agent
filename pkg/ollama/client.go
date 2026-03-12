@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/matst80/go-ollama-client/pkg/ai"
+	"github.com/matst80/go-ai-agent/pkg/ai"
 )
 
 // OllamaClient handles interaction with the Ollama API

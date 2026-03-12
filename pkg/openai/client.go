@@ -1,4 +1,4 @@
-package openrouter
+package openai
 
 import (
 	"context"
@@ -9,31 +9,31 @@ import (
 	"github.com/matst80/go-ai-agent/pkg/ai"
 )
 
-// OpenRouterClient handles interaction with the OpenRouter API
-type OpenRouterClient struct {
+// OpenAIClient handles interaction with the OpenAI API
+type OpenAIClient struct {
 	client  *ai.ApiClient
 	logPath string
 }
 
-type OpenRouterEndpoint string
+type OpenAIEndpoint string
 
 const (
-	ChatEndpoint OpenRouterEndpoint = "api/v1/chat/completions"
+	ChatEndpoint OpenAIEndpoint = "/v1/chat/completions"
 )
 
-// NewOpenRouterClient creates a new OpenRouter client
-func NewOpenRouterClient(url string, apiKey string) *OpenRouterClient {
-	return &OpenRouterClient{client: ai.NewApiClient(url, map[string]string{"Authorization": fmt.Sprintf("Bearer %s", apiKey)})}
+// NewOpenAIClient creates a new OpenAI client
+func NewOpenAIClient(url string, apiKey string) *OpenAIClient {
+	return &OpenAIClient{client: ai.NewApiClient(url, map[string]string{"Authorization": fmt.Sprintf("Bearer %s", apiKey)})}
 }
 
-// WithLogFile sets the path to the log file where all OpenRouter response lines will be stored
-func (c *OpenRouterClient) WithLogFile(path string) *OpenRouterClient {
+// WithLogFile sets the path to the log file where all OpenAI response lines will be stored
+func (c *OpenAIClient) WithLogFile(path string) *OpenAIClient {
 	c.logPath = path
 	return c
 }
 
-// Chat handles a non-streaming request to OpenRouter and returns the full ChatResponse
-func (c *OpenRouterClient) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
+// Chat handles a non-streaming request to OpenAI and returns the full ChatResponse
+func (c *OpenAIClient) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
 	req.Stream = false
 
 	resp, err := c.client.PostJson(ctx, string(ChatEndpoint), req)
@@ -43,7 +43,7 @@ func (c *OpenRouterClient) Chat(ctx context.Context, req ai.ChatRequest) (*ai.Ch
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OpenRouter request failed with status %d", resp.StatusCode)
+		return nil, fmt.Errorf("OpenAI request failed with status %d", resp.StatusCode)
 	}
 
 	decoder := json.NewDecoder(resp.Body)
@@ -58,8 +58,8 @@ func (c *OpenRouterClient) Chat(ctx context.Context, req ai.ChatRequest) (*ai.Ch
 var DATA_PREFIX = []byte("data: ")
 var DONE = []byte("[DONE]")
 
-// ChatStreamed handles the streaming request to OpenRouter and returns an error if the request or streaming fails.
-func (c *OpenRouterClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch chan *ai.ChatResponse) error {
+// ChatStreamed handles the streaming request to OpenAI and returns an error if the request or streaming fails.
+func (c *OpenAIClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch chan *ai.ChatResponse) error {
 	defer close(ch)
 
 	resp, err := c.client.PostJson(ctx, string(ChatEndpoint), req)
@@ -72,7 +72,7 @@ func (c *OpenRouterClient) ChatStreamed(ctx context.Context, req ai.ChatRequest,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("OpenRouter request failed with status %d", resp.StatusCode)
+		return fmt.Errorf("OpenAI request failed with status %d", resp.StatusCode)
 	}
 
 	var chatResp ChatCompletionChunk

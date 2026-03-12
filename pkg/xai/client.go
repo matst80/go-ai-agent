@@ -8,7 +8,7 @@ import (
 
 	"net/http"
 
-	"github.com/matst80/go-ollama-client/pkg/ai"
+	"github.com/matst80/go-ai-agent/pkg/ai"
 )
 
 // XAIClient handles interaction with the xAI API

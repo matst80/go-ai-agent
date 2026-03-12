@@ -3,7 +3,7 @@ package ollama
 import (
 	"time"
 
-	"github.com/matst80/go-ollama-client/pkg/ai"
+	"github.com/matst80/go-ai-agent/pkg/ai"
 )
 
 type ListModelsResponse struct {

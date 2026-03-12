@@ -9,17 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/matst80/go-ollama-client/pkg/ai"
-	"github.com/matst80/go-ollama-client/pkg/ollama"
-	"github.com/matst80/go-ollama-client/pkg/tools"
-	"github.com/matst80/go-ollama-client/pkg/xai"
-)
-
-var (
-	reasoningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true)
-	infoStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
+	"github.com/matst80/go-ai-agent/pkg/ai"
+	"github.com/matst80/go-ai-agent/pkg/gemini"
+	"github.com/matst80/go-ai-agent/pkg/ollama"
+	"github.com/matst80/go-ai-agent/pkg/tools"
 )
 
 type RunArgs struct {
@@ -71,7 +64,8 @@ func PullModel(client *ollama.OllamaClient, model string) error {
 
 func main() {
 	//client := openrouter.NewOpenRouterClient("https://openrouter.ai", os.Getenv("OPENROUTER_KEY")).WithLogFile("openrouter.log")
-	client := xai.NewXAIClient("https://api.x.ai/v1", os.Getenv("XAI_API_KEY"))
+	//client := xai.NewXAIClient("https://api.x.ai/v1", os.Getenv("XAI_API_KEY"))
+	client := gemini.NewGeminiClient(os.Getenv("GEMENI_API_KEY"))
 	//client := ollama.NewOllamaClient("http://localhost:11434")
 	ctx := context.Background()
 	// models, err := client.ListModels(ctx)
@@ -86,7 +80,7 @@ func main() {
 	registry := tools.NewRegistry()
 	registry.Register("run", &RunArgs{}, RunCommand)
 
-	req := ai.NewChatRequest("grok-4-1-fast-reasoning").
+	req := ai.NewChatRequest("gemini-3.1-flash-lite-preview").
 		WithStreaming(true).
 		// WithThinking(true).
 		// WithOptions(&ai.ModelOptions{
@@ -101,21 +95,12 @@ func main() {
 	// Tool executor
 	executor := tools.NewToolExecutor(registry)
 
-	// Setup renderer - disabled word wrap for cleaner live-overwrite
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(120),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	// Send the initial user message. This starts the processing loop transparently.
 	if err := agentSession.SendUserMessage(ctx, "can you use tool run to get my free disk space?"); err != nil {
 		fmt.Printf("\nError: %v\n", err)
 	}
 
-	fmt.Println(infoStyle.Render("Streaming Ollama response..."))
+	fmt.Println("Streaming Ollama response...")
 	fmt.Println()
 
 	var lastLines []string
@@ -149,21 +134,15 @@ func main() {
 		// Build the output string
 		var output strings.Builder
 		if res.ReasoningContent != "" {
-			output.WriteString(reasoningStyle.Render("Thinking:\n"))
-			reasoned, err := renderer.Render(res.ReasoningContent)
-			if err != nil {
-				output.WriteString(err.Error())
-			}
-			output.WriteString(reasoned)
+			output.WriteString("Thinking:\n")
+
+			output.WriteString(res.ReasoningContent)
 			output.WriteString("\n")
 		}
 
 		if res.Content != "" {
-			rendered, err := renderer.Render(res.Content)
-			if err != nil {
-				output.WriteString(err.Error())
-			}
-			output.WriteString(rendered)
+
+			output.WriteString(res.Content)
 		}
 
 		outStr := output.String()

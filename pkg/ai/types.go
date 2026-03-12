@@ -84,7 +84,8 @@ type ToolCall struct {
 	Index    *int         `json:"index,omitempty"`
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
-	Function FunctionCall `json:"function"`
+	Function         FunctionCall `json:"function"`
+	ThoughtSignature string       `json:"thought_signature,omitempty"`
 }
 
 type FunctionCall struct {
