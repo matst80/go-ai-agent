@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/matst80/go-ollama-client/pkg/ai"
 	"github.com/matst80/go-ollama-client/pkg/ollama"
 	"github.com/matst80/go-ollama-client/pkg/tools"
+	"github.com/matst80/go-ollama-client/pkg/xai"
 )
 
 var (
@@ -69,7 +71,8 @@ func PullModel(client *ollama.OllamaClient, model string) error {
 
 func main() {
 	//client := openrouter.NewOpenRouterClient("https://openrouter.ai", os.Getenv("OPENROUTER_KEY")).WithLogFile("openrouter.log")
-	client := ollama.NewOllamaClient("http://localhost:11434")
+	client := xai.NewXAIClient("https://api.x.ai/v1", os.Getenv("XAI_API_KEY"))
+	//client := ollama.NewOllamaClient("http://localhost:11434")
 	ctx := context.Background()
 	// models, err := client.ListModels(ctx)
 	// if err != nil {
@@ -83,7 +86,7 @@ func main() {
 	registry := tools.NewRegistry()
 	registry.Register("run", &RunArgs{}, RunCommand)
 
-	req := ai.NewChatRequest("qwen3.5:4b").
+	req := ai.NewChatRequest("grok-4-1-fast-reasoning").
 		WithStreaming(true).
 		// WithThinking(true).
 		// WithOptions(&ai.ModelOptions{
