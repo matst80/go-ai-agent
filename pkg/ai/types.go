@@ -81,9 +81,9 @@ type Function struct {
 
 // ToolCall represents a call to a tool from the AI
 type ToolCall struct {
-	Index    *int         `json:"index,omitempty"`
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
+	Index            *int         `json:"index,omitempty"`
+	ID               string       `json:"id"`
+	Type             string       `json:"type"`
 	Function         FunctionCall `json:"function"`
 	ThoughtSignature string       `json:"thought_signature,omitempty"`
 }
@@ -136,10 +136,10 @@ func (r *BaseRequest[T]) WithModel(model string) *T {
 	return r.parent
 }
 
-func (r *BaseRequest[T]) WithStreaming(stream bool) *T {
-	r.Stream = stream
-	return r.parent
-}
+// func (r *BaseRequest[T]) WithStreaming(stream bool) *T {
+// 	r.Stream = stream
+// 	return r.parent
+// }
 
 func (r *BaseRequest[T]) WithFormat(format ResponseFormat) *T {
 	r.Format = &format

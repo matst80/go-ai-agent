@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+func asPrt[T any](v T) *T {
+	return &v
+}
+
 func TestStreamAccumulator(t *testing.T) {
 	ctx := context.Background()
 	input := make(chan *ChatResponse)
@@ -31,8 +35,9 @@ func TestStreamAccumulator(t *testing.T) {
 			Message: Message{
 				ToolCalls: []ToolCall{
 					{
-						ID:   "call_1",
-						Type: "function",
+						Index: asPrt(0),
+						ID:    "call_1",
+						Type:  "function",
 						Function: struct {
 							Name      string          `json:"name"`
 							Arguments json.RawMessage `json:"arguments"`
@@ -48,8 +53,9 @@ func TestStreamAccumulator(t *testing.T) {
 			Message: Message{
 				ToolCalls: []ToolCall{
 					{
-						ID:   "call_1",
-						Type: "function",
+						Index: asPrt(0),
+						ID:    "call_1",
+						Type:  "function",
 						Function: struct {
 							Name      string          `json:"name"`
 							Arguments json.RawMessage `json:"arguments"`

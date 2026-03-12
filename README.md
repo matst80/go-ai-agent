@@ -35,7 +35,7 @@ import (
 func main() {
 	client := ollama.NewOllamaClient("http://localhost:11434")
 	
-	req := ai.NewChatRequest("llama3").
+	req := ai.NewChatRequest("qwen3.5:4b").
 		AddMessage(ai.MessageRoleUser, "Why is the sky blue?")
 
 	resp, err := client.Chat(context.Background(), *req)
@@ -106,7 +106,7 @@ func main() {
 	ctx := context.Background()
 	client := gemini.NewGeminiClient(os.Getenv("GEMINI_API_KEY"))
 	
-	req := ai.NewChatRequest("gemini-1.5-flash").WithStreaming(true)
+	req := ai.NewChatRequest("gemini-3.1-flash-lite-preview").WithStreaming(true)
 	
 	// Create a session that automatically accumulates history
 	session := ai.NewAgentSession(ctx, client, *req, ai.WithAccumulator())

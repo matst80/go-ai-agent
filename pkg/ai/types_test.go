@@ -126,7 +126,7 @@ func TestChatRequest_Marshal(t *testing.T) {
 func TestChatRequest_Builder(t *testing.T) {
 	req := NewChatRequest("gemma3").
 		AddMessage("user", "hello").
-		WithStreaming(true).
+		//WithStreaming(true).
 		WithThinking(true) //.
 		//WithKeepAlive("10m")
 
@@ -139,38 +139,14 @@ func TestChatRequest_Builder(t *testing.T) {
 	if req.Messages[0].Content != "hello" {
 		t.Errorf("expected content hello, got %s", req.Messages[0].Content)
 	}
-	if !req.Stream {
-		t.Error("expected stream to be true")
-	}
 	if req.Think != true {
 		t.Error("expected think to be true")
 	}
-	// if *req.KeepAlive != "10m" {
-	// 	t.Errorf("expected keep_alive 10m, got %s", *req.KeepAlive)
-	// }
 }
-
-// func TestChatRequest_BuilderWithOptions(t *testing.T) {
-// 	opts := &ModelOptions{
-// 		Temperature:       0.8,
-// 		ContextWindowSize: 4096,
-// 	}
-
-// 	req := NewChatRequestWithOptions("gemma3", opts).
-// 		AddMessage("user", "hello")
-
-// 	if req.Options.Temperature != 0.8 {
-// 		t.Errorf("expected temperature 0.8, got %f", req.Options.Temperature)
-// 	}
-// 	if req.Options.ContextWindowSize != 4096 {
-// 		t.Errorf("expected num_ctx 4096, got %d", req.Options.ContextWindowSize)
-// 	}
-// }
 
 func TestGenerateRequest_Marshal(t *testing.T) {
 	req := NewGenerateRequest("gemma3", "Why is the sky blue?").
 		WithSystem("You are a helpful assistant").
-		WithStreaming(false).
 		WithRaw(true).
 		WithContext([]int{1, 2, 3})
 
