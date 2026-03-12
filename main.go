@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/matst80/go-ollama-client/pkg/ai"
 	"github.com/matst80/go-ollama-client/pkg/ollama"
+	"github.com/matst80/go-ollama-client/pkg/openrouter"
 	"github.com/matst80/go-ollama-client/pkg/tools"
 )
 
@@ -45,29 +48,53 @@ func RunCommand(args RunArgs) string {
 	return string(output)
 }
 
+func PullModel(client *ollama.OllamaClient, model string) error {
+	ch := make(chan *ollama.StatusResponse)
+
+	// Consume the status channel in a separate goroutine so the streamer
+	// can send without deadlocking. Previously the anonymous function
+	// ran synchronously and blocked waiting for messages before the
+	// streamer was started.
+	go func() {
+		log.Printf("Pulling %s", model)
+		for resp := range ch {
+			if resp.Total == 0 {
+				continue
+			}
+			fmt.Printf("\r\033[2KPulling... %3d%%", int(float64(resp.Completed)/float64(resp.Total)*100.0))
+		}
+		log.Println("Download completed")
+	}()
+
+	return client.PullModelStreamed(context.Background(), *ollama.NewPushPullRequest(model), ch)
+}
+
 func main() {
-	client := ollama.NewOllamaClient("http://localhost:11434")
+	client := openrouter.NewOpenRouterClient("https://openrouter.ai", os.Getenv("OPENROUTER_KEY")).WithLogFile("openrouter.log")
+	//client := ollama.NewOllamaClient("http://localhost:11434")
 	ctx := context.Background()
-	models, err := client.ListModels(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, model := range models.Models {
-		fmt.Printf("%s, (%d MB)\n", model.Model, model.Size/1024/1024)
-	}
+	// models, err := client.ListModels(ctx)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// for _, model := range models.Models {
+	// 	fmt.Printf("%s, (%d MB)\n", model.Model, model.Size/1024/1024)
+	// }
+	// PullModel(client, "qwen3.5:4b")
+
 	registry := tools.NewRegistry()
 	registry.Register("run", &RunArgs{}, RunCommand)
 
-	req := ollama.NewChatRequest("qwen3.5:4b").
+	req := ai.NewChatRequest("stepfun/step-3.5-flash:free").
 		WithStreaming(true).
-		WithThinking(true).
-		WithOptions(&ollama.ModelOptions{
-			ContextWindowSize: 8192,
-		}).
+		// WithThinking(true).
+		// WithOptions(&ai.ModelOptions{
+		// 	ContextWindowSize: 8192,
+		// }).
 		WithTools(registry.GetTools())
 
 	// Initialize the new AgentSession with the request
-	agentSession := ollama.NewAgentSession(ctx, client, req, ollama.WithAccumulator())
+	agentSession := ai.NewAgentSession(ctx, client, req, ai.WithAccumulator())
 	defer agentSession.Stop()
 
 	// Tool executor
@@ -103,7 +130,7 @@ func main() {
 			}
 
 			// Deliver tool execution results back into the session
-			var resultMsgs []ollama.Message
+			var resultMsgs []ai.Message
 			for _, tr := range results {
 				msg := tr.ToResultMessage()
 				resultMsgs = append(resultMsgs, *msg)

@@ -1,4 +1,4 @@
-package ollama
+package ai
 
 import (
 	"context"
@@ -97,6 +97,82 @@ func TestStreamAccumulator(t *testing.T) {
 	tc := lastAcc.ToolCalls[0]
 	if string(tc.Function.Arguments) != `{"city":"Oslo"}` {
 		t.Errorf("Expected tool call arguments %q, got %q", `{"city":"Oslo"}`, string(tc.Function.Arguments))
+	}
+}
+
+func TestStreamAccumulator_ToolCallIndices(t *testing.T) {
+	ctx := context.Background()
+	input := make(chan *ChatResponse)
+	output := StreamAccumulator(ctx, input, false)
+
+	idx0 := 0
+	chunks := []*ChatResponse{
+		{
+			Message: Message{
+				ToolCalls: []ToolCall{
+					{
+						Index: &idx0,
+						ID:    "call_123",
+						Type:  "function",
+						Function: FunctionCall{
+							Name:      "run",
+							Arguments: json.RawMessage(""),
+						},
+					},
+				},
+			},
+		},
+		{
+			Message: Message{
+				ToolCalls: []ToolCall{
+					{
+						Index: &idx0,
+						Function: FunctionCall{
+							Arguments: json.RawMessage(`{"command": `),
+						},
+					},
+				},
+			},
+		},
+		{
+			Message: Message{
+				ToolCalls: []ToolCall{
+					{
+						Index: &idx0,
+						Function: FunctionCall{
+							Arguments: json.RawMessage(`"df -h"}`),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	go func() {
+		for _, c := range chunks {
+			input <- c
+		}
+		close(input)
+	}()
+
+	var lastAcc *AccumulatedResponse
+	for acc := range output {
+		lastAcc = acc
+	}
+
+	if len(lastAcc.ToolCalls) != 1 {
+		t.Fatalf("Expected 1 tool call, got %d", len(lastAcc.ToolCalls))
+	}
+
+	tc := lastAcc.ToolCalls[0]
+	if tc.ID != "call_123" {
+		t.Errorf("Expected ID 'call_123', got %s", tc.ID)
+	}
+	if tc.Function.Name != "run" {
+		t.Errorf("Expected name 'run', got %s", tc.Function.Name)
+	}
+	if string(tc.Function.Arguments) != `{"command": "df -h"}` {
+		t.Errorf("Expected arguments '{\"command\": \"df -h\"}', got %s", string(tc.Function.Arguments))
 	}
 }
 

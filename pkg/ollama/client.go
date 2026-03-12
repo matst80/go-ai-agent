@@ -8,12 +8,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/matst80/go-ollama-client/pkg/ai"
 )
 
 // OllamaClient handles interaction with the Ollama API
 type OllamaClient struct {
-	auth string
-	URL  string
+	client *ai.ApiClient
 }
 
 type OllamaEndpoint string
@@ -35,53 +36,21 @@ const (
 
 // NewOllamaClient creates a new Ollama client
 func NewOllamaClient(url string) *OllamaClient {
-	return &OllamaClient{URL: url}
+	return &OllamaClient{client: ai.NewApiClient(url, map[string]string{})}
 }
 
 func (c *OllamaClient) WithAuth(auth string) *OllamaClient {
-	c.auth = auth
+	c.client.SetHeaders(map[string]string{
+		"Authorization": fmt.Sprintf("Bearer %s", auth),
+	})
 	return c
 }
 
-func (c *OllamaClient) post(ctx context.Context, endpoint OllamaEndpoint, data any) (*http.Response, error) {
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/%s", c.URL, endpoint), bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, nil
-}
-
-func (c *OllamaClient) get(ctx context.Context, endpoint OllamaEndpoint) (*http.Response, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/%s", c.URL, endpoint), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, nil
-}
-
 // Chat handles a non-streaming request to Ollama and returns the full ChatResponse
-func (c *OllamaClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+func (c *OllamaClient) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
 	req.Stream = false
 
-	resp, err := c.post(ctx, ChatEndpoint, req)
+	resp, err := c.client.PostJson(ctx, string(ChatEndpoint), req)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +61,7 @@ func (c *OllamaClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse
 	}
 
 	decoder := json.NewDecoder(resp.Body)
-	var chatResp ChatResponse
+	var chatResp ai.ChatResponse
 	if err := decoder.Decode(&chatResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
@@ -101,10 +70,10 @@ func (c *OllamaClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse
 }
 
 // ChatStreamed handles the streaming request to Ollama and returns an error if the request or streaming fails.
-func (c *OllamaClient) ChatStreamed(ctx context.Context, req ChatRequest, ch chan *ChatResponse) error {
+func (c *OllamaClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch chan *ai.ChatResponse) error {
 	defer close(ch)
 
-	resp, err := c.post(ctx, ChatEndpoint, req)
+	resp, err := c.client.PostJson(ctx, string(ChatEndpoint), req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -141,7 +110,7 @@ func (c *OllamaClient) ChatStreamed(ctx context.Context, req ChatRequest, ch cha
 			continue
 		}
 
-		var chatResp ChatResponse
+		var chatResp ai.ChatResponse
 		if err := json.Unmarshal(cleanLine, &chatResp); err != nil {
 			continue
 		}
@@ -159,10 +128,10 @@ func (c *OllamaClient) ChatStreamed(ctx context.Context, req ChatRequest, ch cha
 	return nil
 }
 
-func (c *OllamaClient) Generate(ctx context.Context, req GenerateRequest) (*GenerateResponse, error) {
+func (c *OllamaClient) Generate(ctx context.Context, req ai.GenerateRequest) (*ai.GenerateResponse, error) {
 	req.Stream = false
 
-	resp, err := c.post(ctx, GenerateEndpoint, req)
+	resp, err := c.client.PostJson(ctx, string(GenerateEndpoint), req)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +142,7 @@ func (c *OllamaClient) Generate(ctx context.Context, req GenerateRequest) (*Gene
 	}
 
 	decoder := json.NewDecoder(resp.Body)
-	var chatResp GenerateResponse
+	var chatResp ai.GenerateResponse
 	if err := decoder.Decode(&chatResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
@@ -181,10 +150,10 @@ func (c *OllamaClient) Generate(ctx context.Context, req GenerateRequest) (*Gene
 	return &chatResp, nil
 }
 
-func (c *OllamaClient) GenerateEmbeddings(ctx context.Context, req EmbeddingsRequest) (*EmbeddingsResponse, error) {
+func (c *OllamaClient) GenerateEmbeddings(ctx context.Context, req ai.EmbeddingsRequest) (*ai.EmbeddingsResponse, error) {
 	req.Stream = false
 
-	resp, err := c.post(ctx, GenerateEmbeddingsEndpoint, req)
+	resp, err := c.client.PostJson(ctx, string(GenerateEmbeddingsEndpoint), req)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +164,7 @@ func (c *OllamaClient) GenerateEmbeddings(ctx context.Context, req EmbeddingsReq
 	}
 
 	decoder := json.NewDecoder(resp.Body)
-	var chatResp EmbeddingsResponse
+	var chatResp ai.EmbeddingsResponse
 	if err := decoder.Decode(&chatResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
@@ -204,7 +173,7 @@ func (c *OllamaClient) GenerateEmbeddings(ctx context.Context, req EmbeddingsReq
 }
 
 func (c *OllamaClient) ListModels(ctx context.Context) (*ListModelsResponse, error) {
-	resp, err := c.get(ctx, ListModelsEndpoint)
+	resp, err := c.client.GetJson(ctx, string(ListModelsEndpoint))
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +193,7 @@ func (c *OllamaClient) ListModels(ctx context.Context) (*ListModelsResponse, err
 }
 
 func (c *OllamaClient) ListRunningModels(ctx context.Context) (*ListRunningModelsResponse, error) {
-	resp, err := c.get(ctx, ListRunningModelsEndpoint)
+	resp, err := c.client.GetJson(ctx, string(ListRunningModelsEndpoint))
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +214,7 @@ func (c *OllamaClient) ListRunningModels(ctx context.Context) (*ListRunningModel
 
 func (c *OllamaClient) ShowModelDetails(ctx context.Context, model string) (*ModelDetailsResponse, error) {
 	req := ModelDetailsRequest{Model: model}
-	resp, err := c.post(ctx, ShowEndpoint, req)
+	resp, err := c.client.PostJson(ctx, string(ShowEndpoint), req)
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +236,7 @@ func (c *OllamaClient) ShowModelDetails(ctx context.Context, model string) (*Mod
 func (c *OllamaClient) CreateModel(ctx context.Context, req CreateRequest) (*CreateResponse, error) {
 	req.Stream = false
 
-	resp, err := c.post(ctx, CreateEndpoint, req)
+	resp, err := c.client.PostJson(ctx, string(CreateEndpoint), req)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +258,7 @@ func (c *OllamaClient) CreateModel(ctx context.Context, req CreateRequest) (*Cre
 func (c *OllamaClient) CreateModelStreamed(ctx context.Context, req CreateRequest, ch chan *CreateResponse) error {
 	defer close(ch)
 
-	resp, err := c.post(ctx, CreateEndpoint, req)
+	resp, err := c.client.PostJson(ctx, string(CreateEndpoint), req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -341,7 +310,7 @@ func (c *OllamaClient) CreateModelStreamed(ctx context.Context, req CreateReques
 }
 
 func (c *OllamaClient) CopyModel(ctx context.Context, source, destination string) error {
-	_, err := c.post(ctx, CopyModelEndpoint, CopyRequest{
+	_, err := c.client.PostJson(ctx, string(CopyModelEndpoint), CopyRequest{
 		Source:      source,
 		Destination: destination,
 	})
@@ -351,7 +320,7 @@ func (c *OllamaClient) CopyModel(ctx context.Context, source, destination string
 func (c *OllamaClient) PullModel(ctx context.Context, req PushPullRequest) (*StatusResponse, error) {
 	req.Stream = false
 
-	resp, err := c.post(ctx, PullModelEndpoint, req)
+	resp, err := c.client.PostJson(ctx, string(PullModelEndpoint), req)
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +343,7 @@ func (c *OllamaClient) PullModelStreamed(ctx context.Context, req PushPullReques
 	defer close(ch)
 	req.Stream = true
 
-	resp, err := c.post(ctx, PullModelEndpoint, req)
+	resp, err := c.client.PostJson(ctx, string(PullModelEndpoint), req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -410,14 +379,9 @@ func (c *OllamaClient) PullModelStreamed(ctx context.Context, req PushPullReques
 		if len(cleanLine) == 0 {
 			continue
 		}
-
 		var pullResp StatusResponse
 		if err := json.Unmarshal(cleanLine, &pullResp); err != nil {
 			continue
-		}
-
-		if pullResp.Error != "" {
-			return fmt.Errorf("ollama error: %s", pullResp.Error)
 		}
 
 		ch <- &pullResp
@@ -432,7 +396,7 @@ func (c *OllamaClient) PullModelStreamed(ctx context.Context, req PushPullReques
 func (c *OllamaClient) PushModel(ctx context.Context, req PushPullRequest) (*StatusResponse, error) {
 	req.Stream = false
 
-	resp, err := c.post(ctx, PushModelEndpoint, req)
+	resp, err := c.client.PostJson(ctx, string(PushModelEndpoint), req)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +419,7 @@ func (c *OllamaClient) PushModelStreamed(ctx context.Context, req PushPullReques
 	defer close(ch)
 	req.Stream = true
 
-	resp, err := c.post(ctx, PushModelEndpoint, req)
+	resp, err := c.client.PostJson(ctx, string(PushModelEndpoint), req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -497,35 +461,27 @@ func (c *OllamaClient) PushModelStreamed(ctx context.Context, req PushPullReques
 			continue
 		}
 
-		if statusResp.Error != "" {
-			return fmt.Errorf("ollama error: %s", statusResp.Error)
-		}
-
 		ch <- &statusResp
-
-		if statusResp.Status == "success" {
-			break
-		}
 	}
 	return nil
 }
 
-func (c *OllamaClient) DeleteModel(ctx context.Context, model string) error {
-	resp, err := c.post(ctx, DeleteModelEndpoint, DeleteRequest{Model: model})
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+// func (c *OllamaClient) DeleteModel(ctx context.Context, model string) error {
+// 	resp, err := c.client.Delete(ctx, string(DeleteModelEndpoint), DeleteRequest{Model: model})
+// 	if err != nil {
+// 		return err
+// 	}
+// 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ollama request failed with status %d", resp.StatusCode)
-	}
+// 	if resp.StatusCode != http.StatusOK {
+// 		return fmt.Errorf("ollama request failed with status %d", resp.StatusCode)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
 func (c *OllamaClient) GetVersion(ctx context.Context) (string, error) {
-	resp, err := c.get(ctx, VersionEndpoint)
+	resp, err := c.client.GetJson(ctx, string(VersionEndpoint))
 	if err != nil {
 		return "", err
 	}

@@ -1,4 +1,4 @@
-package ollama
+package ai
 
 import (
 	"context"
@@ -38,23 +38,36 @@ func StreamAccumulator(ctx context.Context, input <-chan *ChatResponse, autoClos
 
 				// Accumulate tool calls
 				if len(chunk.Message.ToolCalls) > 0 {
-					// For tool calls, we might need a more sophisticated merge logic
-					// if they are streamed partially. Ollama usually sends them as whole objects
-					// but let's be safe and track by ID if available.
 					for _, tc := range chunk.Message.ToolCalls {
 						found := false
 						for i, existing := range toolCalls {
-							if existing.ID == tc.ID && tc.ID != "" {
-								// Merge arguments - this assumes they might be partial
-								// but json.RawMessage append isn't always valid JSON.
-								// However, if Ollama sends them as chunks, it's usually Content.
-								// If they are in ToolCalls, let's just append for now.
-								toolCalls[i].Function.Arguments = append(existing.Function.Arguments, tc.Function.Arguments...)
+							// Match by ID if both have it, or by Index if available
+							idMatch := existing.ID != "" && tc.ID != "" && existing.ID == tc.ID
+							indexMatch := existing.Index != nil && tc.Index != nil && *existing.Index == *tc.Index
+
+							if idMatch || indexMatch {
+								// Update fields if they are provided in this chunk
+								if tc.ID != "" {
+									toolCalls[i].ID = tc.ID
+								}
+								if tc.Function.Name != "" {
+									toolCalls[i].Function.Name = tc.Function.Name
+								}
+								if tc.Type != "" {
+									toolCalls[i].Type = tc.Type
+								}
+
+								// Accumulate arguments
+								if len(tc.Function.Arguments) > 0 {
+									toolCalls[i].Function.Arguments = append(toolCalls[i].Function.Arguments, tc.Function.Arguments...)
+								}
 								found = true
 								break
 							}
 						}
 						if !found {
+							// Create a copy to avoid modifying the input chunk if needed
+							// (though here it's already a new ToolCall object)
 							toolCalls = append(toolCalls, tc)
 						}
 					}
