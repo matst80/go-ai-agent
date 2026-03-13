@@ -1,4 +1,4 @@
-# go-ollama-client
+# go-ai-agent
 
 A unified Go client library for Ollama, Gemini, OpenRouter, and other AI providers. It provides a simple, consistent interface for chat, streaming, and tool execution (function calling).
 
