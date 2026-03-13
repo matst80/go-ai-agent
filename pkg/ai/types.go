@@ -346,6 +346,7 @@ type ToolDefinition struct {
 	Enabled     bool
 	ArgsType    reflect.Type
 	Handler     reflect.Value
+	Timeout     time.Duration
 }
 
 func GetToolDefinition(name, description string, args any, fn any) (*ToolDefinition, error) {
@@ -374,5 +375,11 @@ func GetToolDefinition(name, description string, args any, fn any) (*ToolDefinit
 		ArgsType:    argType,
 		Handler:     v,
 		Parameters:  generateJSONSchema(argType),
+		Timeout:     30 * time.Second,
 	}, nil
+}
+
+func (td *ToolDefinition) WithTimeout(d time.Duration) *ToolDefinition {
+	td.Timeout = d
+	return td
 }

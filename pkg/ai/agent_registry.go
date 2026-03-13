@@ -108,6 +108,10 @@ func (r *AgentRegistry) SpawnAgent(ctx context.Context, typeName string, instanc
 	}
 
 	session := agentDef.SpawnFunction(ctx, content)
+	session.SetState(func(s *AgentState) {
+		s.Title = agentDef.Title
+		s.Type = typeName
+	})
 	r.agents[instanceID] = session
 	r.mu.Unlock()
 

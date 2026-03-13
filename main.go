@@ -73,7 +73,7 @@ func main() {
 	for res := range masterSession.Recv() {
 		// Handle Tool Calls
 		if res.Chunk.Done && len(res.ToolCalls) > 0 {
-			results, err := executor.HandleCalls(res.ToolCalls)
+			results, err := executor.HandleCalls(ctx, res.ToolCalls)
 			if err != nil {
 				fmt.Printf("Tool execution error: %v\n", err)
 			}
