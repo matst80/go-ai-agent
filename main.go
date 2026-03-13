@@ -19,28 +19,28 @@ func main() {
 	registry := ai.NewAgentRegistry()
 
 	// 2. Register Agent Types: Ollama
-	registry.RegisterAgent("ollama", ai.AgentDefinition{
-		Title:       "Ollama Agent",
-		Description: "Local LLM powered by Ollama (llama3)",
-		SpawnFunction: func(ctx context.Context, content string) ai.AgentSessionInterface {
+	registry.RegisterAgent("ollama", ai.NewAgentDefinition(
+		"Ollama Agent",
+		"Local LLM powered by Ollama (llama3)",
+		func(ctx context.Context, content string) ai.AgentSessionInterface {
 			client := ollama.NewOllamaClient("http://localhost:11434")
 			req := ai.NewChatRequest("qwen3.5:4b")
 			req.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: content}}
 			return ai.NewAgentSession(ctx, client, req)
 		},
-	})
+	))
 
 	// 3. Register Agent Types: xAI
-	registry.RegisterAgent("xai", ai.AgentDefinition{
-		Title:       "xAI Agent",
-		Description: "Cloud LLM powered by xAI (grok-beta)",
-		SpawnFunction: func(ctx context.Context, content string) ai.AgentSessionInterface {
+	registry.RegisterAgent("xai", ai.NewAgentDefinition(
+		"xAI Agent",
+		"Cloud LLM powered by xAI (grok-beta)",
+		func(ctx context.Context, content string) ai.AgentSessionInterface {
 			client := xai.NewXAIClient("https://api.x.ai/v1", os.Getenv("XAI_API_KEY"))
 			req := ai.NewChatRequest("grok-beta")
 			req.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: content}}
 			return ai.NewAgentSession(ctx, client, req)
 		},
-	})
+	))
 
 	// 4. Create RegistryToolHandler to expose registry operations as tools
 	toolHandler := ai.NewRegistryToolHandler(registry)

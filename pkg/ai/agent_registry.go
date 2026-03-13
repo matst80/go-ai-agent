@@ -12,6 +12,14 @@ type AgentDefinition struct {
 	SpawnFunction func(ctx context.Context, content string) AgentSessionInterface
 }
 
+func NewAgentDefinition(title, description string, spawnFn func(ctx context.Context, content string) AgentSessionInterface) AgentDefinition {
+	return AgentDefinition{
+		Title:         title,
+		Description:   description,
+		SpawnFunction: spawnFn,
+	}
+}
+
 type AgentRegistry struct {
 	agents     map[string]AgentSessionInterface
 	mu         sync.RWMutex

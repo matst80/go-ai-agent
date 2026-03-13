@@ -155,16 +155,16 @@ Define the types of agents that can be dynamically spawned.
 ```go
 registry := ai.NewAgentRegistry()
 
-registry.RegisterAgent("ollama", ai.AgentDefinition{
-    Title:       "Ollama Agent",
-    Description: "Local LLM powered by Ollama",
-    SpawnFunction: func(ctx context.Context, content string) ai.AgentSessionInterface {
+registry.RegisterAgent("ollama", ai.NewAgentDefinition(
+    "Ollama Agent",
+    "Local LLM powered by Ollama",
+    func(ctx context.Context, content string) ai.AgentSessionInterface {
         client := ollama.NewOllamaClient("http://localhost:11434")
         req := ai.NewChatRequest("llama3")
         req.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: content}}
         return ai.NewAgentSession(ctx, client, req)
     },
-})
+))
 ```
 
 ### 2. Expose Registry as Tools
