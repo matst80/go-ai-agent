@@ -14,8 +14,9 @@ const (
 )
 
 type RegistryEvent struct {
-	Type    RegistryEventType
-	AgentID string
+	Type          RegistryEventType
+	AgentID       string
+	ParentAgentID string
 }
 
 type AgentDefinition struct {
@@ -94,7 +95,7 @@ func (r *AgentRegistry) GetAgent(instanceID string) (AgentSessionInterface, bool
 	return agent, ok
 }
 
-func (r *AgentRegistry) SpawnAgent(ctx context.Context, typeName string, instanceID string, content string) (AgentSessionInterface, error) {
+func (r *AgentRegistry) SpawnAgent(ctx context.Context, typeName string, instanceID string, content string, parentID string) (AgentSessionInterface, error) {
 	r.mu.Lock()
 	agentDef, ok := r.AgentTypes[typeName]
 	if !ok {
@@ -111,13 +112,15 @@ func (r *AgentRegistry) SpawnAgent(ctx context.Context, typeName string, instanc
 	session.SetState(func(s *AgentState) {
 		s.Title = agentDef.Title
 		s.Type = typeName
+		s.ParentID = parentID
 	})
 	r.agents[instanceID] = session
 	r.mu.Unlock()
 
 	r.emitEvent(RegistryEvent{
-		Type:    EventAgentSpawned,
-		AgentID: instanceID,
+		Type:          EventAgentSpawned,
+		AgentID:       instanceID,
+		ParentAgentID: parentID,
 	})
 
 	return session, nil
