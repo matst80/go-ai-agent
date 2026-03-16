@@ -28,7 +28,7 @@ type ConfigFile struct {
 func (c *ConfigFile) UnmarshalJSON(data []byte) error {
 	var raw map[string]ServerConfig
 	if err := json.Unmarshal(data, &raw); err != nil {
-		
+
 		// Fallback for Claude's format which wraps it in {"mcpServers": { ... }}
 		var claudeFormat struct {
 			MCPServers map[string]ServerConfig `json:"mcpServers"`

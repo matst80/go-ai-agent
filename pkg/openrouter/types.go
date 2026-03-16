@@ -151,12 +151,12 @@ type OpenRouterMessage struct {
 
 // OpenRouterChatRequest is the strongly-typed request shape to send to OpenRouter
 type OpenRouterChatRequest struct {
-	Model    string               `json:"model"`
-	Stream   bool                 `json:"stream"`
-	Format   *ai.ResponseFormat   `json:"format,omitempty"`
-	Think    any                  `json:"think,omitempty"`
-	Messages []OpenRouterMessage  `json:"messages"`
-	Tools    []ai.Tool            `json:"tools,omitempty"`
+	Model    string              `json:"model"`
+	Stream   bool                `json:"stream"`
+	Format   *ai.ResponseFormat  `json:"format,omitempty"`
+	Think    any                 `json:"think,omitempty"`
+	Messages []OpenRouterMessage `json:"messages"`
+	Tools    []ai.Tool           `json:"tools,omitempty"`
 }
 
 // ToOpenRouterChatRequest converts a typed ai.ChatRequest into a strongly-typed OpenRouterChatRequest.

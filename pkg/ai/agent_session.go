@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -35,13 +36,25 @@ type AgentState struct {
 // AgentSession manages a continuous chat session, tracking the underlying ChatRequest
 // and providing a single global channel for responses of type T.
 type AgentSession struct {
-	client     ChatClientInterface
-	rec        *ChatRequest
-	globalChan chan AccumulatedResponse
-	ctx        context.Context
-	cancel     context.CancelFunc
-	mu         sync.Mutex
-	state      AgentState
+	client           ChatClientInterface
+	rec              *ChatRequest
+	globalChan       chan AccumulatedResponse
+	ctx              context.Context
+	cancel           context.CancelFunc
+	mu               sync.Mutex
+	state            AgentState
+	truncationConfig *TruncationConfig
+	// optional repository root used by the diff parser
+	repoRoot string
+	// optional operation handler used by the diff parser
+	opHandler OperationHandler
+	// internal parser instance (set when a stream starts)
+	diffParser *DiffParser
+}
+
+// TruncationConfig holds optional truncation settings for a session.
+type TruncationConfig struct {
+	Strategy TruncationStrategy
 }
 
 // NewAgentSession creates a new AgentSession with the given client and base request.
@@ -68,6 +81,27 @@ func NewAgentSession(ctx context.Context, client ChatClientInterface, req *ChatR
 	return session
 }
 
+// WithRepoRoot configures a repo root path used by the diff parser.
+func WithRepoRoot(path string) AgentSessionOption {
+	return func(a *AgentSession) {
+		a.repoRoot = path
+	}
+}
+
+// WithOperationHandler sets a composable OperationHandler for streamed diff operations.
+func WithOperationHandler(h OperationHandler) AgentSessionOption {
+	return func(a *AgentSession) {
+		a.opHandler = h
+	}
+}
+
+// WithTruncation returns an AgentSessionOption that configures a truncation strategy.
+func WithTruncation(strategy TruncationStrategy) AgentSessionOption {
+	return func(a *AgentSession) {
+		a.truncationConfig = &TruncationConfig{Strategy: strategy}
+	}
+}
+
 // Recv returns a receive-only channel for all chat responses across multiple turns.
 func (a *AgentSession) Recv() <-chan AccumulatedResponse {
 	return a.globalChan
@@ -85,6 +119,8 @@ func (a *AgentSession) SendUserMessage(ctx context.Context, msg string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.rec.AddMessage(MessageRoleUser, msg)
+	// Apply truncation if configured (must run while locked)
+	a.applyTruncationLocked()
 	return a.streamChat(ctx)
 }
 
@@ -94,7 +130,27 @@ func (a *AgentSession) SendMessages(ctx context.Context, msgs ...Message) error 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.rec.Messages = append(a.rec.Messages, msgs...)
+	// Apply truncation if configured (must run while locked)
+	a.applyTruncationLocked()
 	return a.streamChat(ctx)
+}
+
+// applyTruncationLocked applies the configured truncation strategy to a.rec.Messages.
+// Caller must hold a.mu.
+func (a *AgentSession) applyTruncationLocked() {
+	if a.truncationConfig == nil || a.truncationConfig.Strategy == nil {
+		return
+	}
+
+	// Make a copy for strategy to inspect
+	msgs := a.rec.Messages
+	truncated, removed := a.truncationConfig.Strategy.Apply(msgs)
+	if removed <= 0 {
+		return
+	}
+
+	// Replace messages with truncated result
+	a.rec.Messages = truncated
 }
 
 // GetMessageHistory returns the current conversation history.
@@ -190,8 +246,25 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 		}
 	}()
 
-	// Use StreamAccumulator to get accumulated responses
-	accCh := StreamAccumulator(ctx, ch, false)
+	// Create a DiffParser and attach it to the accumulated stream so file/patch
+	// NDJSON events are processed as they arrive. Replace the repoRoot below
+	// with your workspace/repo path or wire it via an AgentSession option.
+	repo := "."
+	if a.repoRoot != "" {
+		repo = a.repoRoot
+	}
+	parser := NewDiffParser(repo)
+	// Optionally set custom handlers:
+	// parser.SetFileHandler(func(ctx context.Context, m *StreamMessage) error { ... })
+	if a.opHandler != nil {
+		parser.SetHandler(a.opHandler)
+	}
+	// store parser on session for later inspection (e.g., PopReports)
+	a.diffParser = parser
+
+	// Use StreamAccumulator to get accumulated responses and attach parser so
+	// parsing runs before other consumers see the accumulated messages.
+	accCh := AttachParserToAccumulator(ctx, StreamAccumulator(ctx, ch, false), parser)
 
 	go func() {
 		var last *AccumulatedResponse
@@ -217,6 +290,36 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 				ToolCalls:        last.ToolCalls,
 			})
 			a.mu.Unlock()
+
+			// If the diff parser produced operation reports, emit a summary message back
+			if a.diffParser != nil {
+				reports := a.diffParser.PopReports()
+				if len(reports) > 0 {
+					// Build a simple textual summary
+					var sb strings.Builder
+					sb.WriteString("[diff-report]\n")
+					for _, r := range reports {
+						status := "OK"
+						if !r.Success {
+							status = "FAILED"
+						}
+						sb.WriteString(fmt.Sprintf("%s %s %s\n", status, r.Op, r.Path))
+						if r.Message != "" {
+							sb.WriteString("  -> " + r.Message + "\n")
+						}
+					}
+
+					// send as one final accumulated response so consumers see it
+					rep := AccumulatedResponse{
+						Chunk:   &ChatResponse{BaseResponse: &BaseResponse{Done: true}},
+						Content: sb.String(),
+					}
+					select {
+					case a.globalChan <- rep:
+					default:
+					}
+				}
+			}
 		}
 	}()
 

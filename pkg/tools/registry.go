@@ -35,7 +35,7 @@ func (r *Registry) Register(name, description string, args any, fn any) error {
 	if err != nil {
 		return err
 	}
-// turbo-all
+	// turbo-all
 	r.tools[name] = toolDef
 
 	return nil

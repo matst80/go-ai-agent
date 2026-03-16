@@ -151,12 +151,12 @@ type OpenAIMessage struct {
 
 // OpenAIChatRequest is the strongly-typed request shape to send to OpenAI
 type OpenAIChatRequest struct {
-	Model    string              `json:"model"`
-	Stream   bool                `json:"stream"`
-	Format   *ai.ResponseFormat  `json:"format,omitempty"`
-	Think    any                 `json:"think,omitempty"`
-	Messages []OpenAIMessage     `json:"messages"`
-	Tools    []ai.Tool           `json:"tools,omitempty"`
+	Model    string             `json:"model"`
+	Stream   bool               `json:"stream"`
+	Format   *ai.ResponseFormat `json:"format,omitempty"`
+	Think    any                `json:"think,omitempty"`
+	Messages []OpenAIMessage    `json:"messages"`
+	Tools    []ai.Tool          `json:"tools,omitempty"`
 }
 
 // ToOpenAIChatRequest converts a typed ai.ChatRequest into a strongly-typed OpenAIChatRequest.

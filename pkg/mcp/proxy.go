@@ -63,7 +63,7 @@ func (p *ServerProxy) RegisterTools(ctx context.Context, registry *tools.Registr
 	return p.RegisterToolsWithFilter(ctx, registry, nil)
 }
 
-// RegisterToolsWithFilter fetches all tools from the connected MCP server and registers them, 
+// RegisterToolsWithFilter fetches all tools from the connected MCP server and registers them,
 // skipping any tools whose names exist in the disabledTools map.
 func (p *ServerProxy) RegisterToolsWithFilter(ctx context.Context, registry *tools.Registry, disabledTools map[string]bool) error {
 	res, err := p.client.ListTools(ctx, mcp.ListToolsRequest{})
@@ -79,7 +79,7 @@ func (p *ServerProxy) RegisterToolsWithFilter(ctx context.Context, registry *too
 
 		// Calculate parameters map
 		var params map[string]interface{}
-		
+
 		var schemaData []byte
 		if t.InputSchema.Type != "" {
 			schemaData, _ = json.Marshal(t.InputSchema)

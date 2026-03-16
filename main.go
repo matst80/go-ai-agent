@@ -81,18 +81,41 @@ func main() {
 	if lp := os.Getenv("AI_LOG_PATH"); lp != "" {
 		masterClient.WithLogFile(lp)
 	}
-	masterReq := ai.NewChatRequest("grok-4-1-fast-non-reasoning").
-		WithTools(masterToolRegistry.GetTools())
+	// System prompt: instruct the model how to emit streamed file operations.
+	// The model should emit newline-delimited JSON (NDJSON) events describing
+	// file operations using the minimal schema: {"type":"file"|"chunk"|"commit"|"done", ...}
+	// Example file add (utf-8):
+	// {"type":"file","op":"add","path":"src/foo.go","content_encoding":"utf-8","content":"package main\n\nfunc Foo() {}\n","atomic":true}
+	// Example chunked upload:
+	// {"type":"chunk","file_id":"f1","chunk_index":0,"total_chunks":2,"data_encoding":"base64","data":"..."}
+	// Commit message (optional): {"type":"commit","message":"Add foo","finalize":true}
+	// When operations are processed the agent will receive a summary report back
+	// as plain text lines starting with "[diff-report]" listing OK/FAILED operations.
 
-	masterSession := ai.NewAgentSession(ctx, masterClient, masterReq)
+	systemPrompt := `You may output machine-actionable file changes as newline-delimited JSON (NDJSON).
+Each line must be a single JSON object with fields: type, id/seq optional, and for type=file: op,path,content_encoding,content,sha256(optional),atomic(optional).
+For large/binary files, use type=chunk with file_id,chunk_index,total_chunks,data_encoding(base64),data. End with type=commit to indicate finalize.
+Only emit NDJSON lines (no surrounding prose) when performing file operations.
+After processing, the system will provide a [diff-report] summary indicating which operations succeeded or failed.
+If you cannot safely make a change, respond with a descriptive NDJSON object of type=meta with message explaining why.
+` + "\n"
+
+	masterReq := ai.NewChatRequest("grok-4-1-fast-non-reasoning").WithTools(masterToolRegistry.GetTools())
+	// place the system prompt as the first message
+	masterReq.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: systemPrompt}}
+
+	// Create the master session and wire the diff parser into it via options.
+	repoRoot := "./test-repo"
+	_ = os.MkdirAll(repoRoot, 0o755)
+
+	masterSession := ai.NewAgentSession(ctx, masterClient, masterReq, ai.WithRepoRoot(repoRoot), ai.WithOperationHandler(&ai.DefaultOperationHandler{}))
 	defer masterSession.Stop()
-
 	executor := tools.NewToolExecutor(masterToolRegistry)
 
 	// 7. Simple Test: Ask the Master Agent to spawn an OpenRouter agent and talk to it
 	fmt.Println("--- Master Agent Session Started ---")
-	testPrompt := "Please spawn an 'openrouter' agent with instance ID 'local-assistant' to help with local tasks. " +
-		"Then message it to ask 'What is the capital of France?' and report back."
+	testPrompt := "Use the streamed file-editor protocol (NDJSON) to create a file at 'workspace/info.txt' with the single line: 'The capital of France is Paris.' " +
+		"The agent must emit only NDJSON file/chunk/commit events when performing edits (no surrounding prose). After applying the change, send a short confirmation message."
 
 	if err := masterSession.SendUserMessage(ctx, testPrompt); err != nil {
 		fmt.Printf("Error: %v\n", err)

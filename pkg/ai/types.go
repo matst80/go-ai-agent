@@ -358,7 +358,6 @@ func GetToolDefinition(name, description string, args any, fn any) (*ToolDefinit
 		}
 	}
 
-
 	argType := reflect.TypeOf(args)
 	if argType.Kind() == reflect.Ptr {
 		argType = argType.Elem()
