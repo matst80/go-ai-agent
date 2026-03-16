@@ -99,7 +99,7 @@ func main() {
 	// listing OK/FAILED operations. If a change cannot be made, emit a
 	// type=meta message with an explanatory `message` field.
 
-	systemPrompt := "Output machine-actionable file changes using fenced `diffstream` blocks only. Do not emit NDJSON or surrounding prose; emit only fenced blocks when performing edits.\n" +
+	systemPrompt := "Output machine-actionable file changes using fenced `diffstream` blocks only. emit only fenced blocks when performing edits.\n" +
 		"Examples (file add):\n" +
 		"```diffstream type=file op=add path=workspace/info.txt encoding=utf-8\nThe single-line content goes here.\n```\n" +
 		"Chunked text upload example (large text split across multiple chunk fences):\n" +
@@ -123,7 +123,7 @@ func main() {
 
 	// 7. Simple Test: Ask the Master Agent to spawn an OpenRouter agent and talk to it
 	fmt.Println("--- Master Agent Session Started ---")
-	testPrompt := "Use fenced `diffstream` blocks to create a file at 'workspace/info.txt' containing the single line: 'The capital of France is Paris.' Emit only fenced `diffstream` blocks with no surrounding prose. After applying the change, send a short confirmation message."
+	testPrompt := "Use fenced `diffstream` blocks to create a file at 'workspace/sky.md' containing the answer to why the sky is blue. After applying the change, send a short confirmation message."
 
 	if err := masterSession.SendUserMessage(ctx, testPrompt); err != nil {
 		fmt.Printf("Error: %v\n", err)
