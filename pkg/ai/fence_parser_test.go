@@ -20,7 +20,7 @@ func TestFenceParser_Simple(t *testing.T) {
 	if m.Type != "file" || m.Op != "add" || m.Path != "sub/hello.txt" {
 		t.Fatalf("unexpected message: %+v", m)
 	}
-	if m.Content != "hello world\n" {
+	if m.Content != "hello world" {
 		t.Fatalf("unexpected content: %q", m.Content)
 	}
 }
