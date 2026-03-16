@@ -25,7 +25,44 @@ func trimQuotes(s string) string {
 
 func parseHeaderAttrs(raw string) map[string]string {
 	m := map[string]string{}
-	parts := strings.Fields(strings.TrimSpace(raw))
+	// support quoted values and values containing spaces by scanning
+	// tokens but allowing "key=\"a b c\"" style quoted values.
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return m
+	}
+	parts := []string{}
+	cur := ""
+	inQuotes := false
+	quoteChar := byte(0)
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if inQuotes {
+			cur += string(c)
+			if c == quoteChar {
+				inQuotes = false
+			}
+			continue
+		}
+		if c == '\'' || c == '"' {
+			inQuotes = true
+			quoteChar = c
+			cur += string(c)
+			continue
+		}
+		if c == ' ' || c == '\t' {
+			if cur != "" {
+				parts = append(parts, cur)
+				cur = ""
+			}
+			continue
+		}
+		cur += string(c)
+	}
+	if cur != "" {
+		parts = append(parts, cur)
+	}
+
 	for _, tok := range parts {
 		if kv := strings.SplitN(tok, "=", 2); len(kv) == 2 {
 			v := trimQuotes(kv[1])
@@ -54,16 +91,24 @@ func (p *FenceParser) Parse(ctx context.Context, res *AccumulatedResponse) ([]*S
 		// find end of opening line
 		nl := strings.IndexByte(s[start:], '\n')
 		if nl == -1 {
+			// no newline yet, wait for more input
 			break
 		}
 		header := strings.TrimSpace(s[start : start+nl])
 		bodyStart := start + nl + 1
-		endIdx := strings.Index(s[bodyStart:], "\n```")
-		if endIdx == -1 {
+		// be permissive: accept closing fence even if there's no preceding newline
+		endRel := strings.Index(s[bodyStart:], "```")
+		if endRel == -1 {
 			break
 		}
-		body := s[bodyStart : bodyStart+endIdx]
-		nextPos := bodyStart + endIdx + len("\n```")
+		// compute absolute index
+		endIdx := bodyStart + endRel
+		body := s[bodyStart:endIdx]
+		// if body begins with a newline (typical), trim the first one to preserve exact content
+		if len(body) > 0 && body[0] == '\n' {
+			body = body[1:]
+		}
+		nextPos := endIdx + len("```")
 
 		attrs := parseHeaderAttrs(strings.TrimSpace(header[len("```diffstream"):]))
 		sm := &StreamMessage{}
@@ -98,13 +143,19 @@ func (p *FenceParser) Parse(ctx context.Context, res *AccumulatedResponse) ([]*S
 			sm.Message = v
 		}
 
-		// decide where to put body
+		// decide where to put body; preserve body exactness for utf-8, but
+		// trim a single trailing newline if model authors included one.
 		if sm.Type == "chunk" || sm.DataEncoding != "" {
-			sm.Data = strings.TrimSpace(body)
+			bodyTrim := strings.TrimSpace(body)
+			sm.Data = bodyTrim
 			if sm.DataEncoding == "" {
 				sm.DataEncoding = "base64"
 			}
 		} else {
+			// keep as-is but strip a single trailing newline common in model outputs
+			if strings.HasSuffix(body, "\n") {
+				body = strings.TrimSuffix(body, "\n")
+			}
 			sm.Content = body
 			if sm.ContentEncoding == "" {
 				sm.ContentEncoding = "utf-8"
