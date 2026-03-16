@@ -45,6 +45,34 @@ Commit after edits (finalize):
 
 ```
 
+System prompt example
+---------------------
+Use the following system prompt as a starting point when creating agent system messages. It tells the model to emit only fenced `diffstream` blocks and gives brief instructions and examples:
+
+```text
+Output machine-actionable file changes using fenced `diffstream` blocks only. Do not emit NDJSON or surrounding prose; emit only fenced blocks when performing edits.
+
+Examples (file add):
+```diffstream type=file op=add path=workspace/info.txt encoding=utf-8
+The single-line content goes here.
+```
+
+Chunked text upload example (split across two chunk fences):
+```diffstream type=chunk file_id=f1 chunk_index=0 total_chunks=2 data_encoding=utf-8
+First part of the content...
+```
+```diffstream type=chunk file_id=f1 chunk_index=1 total_chunks=2 data_encoding=utf-8
+Second part of the content...
+```
+
+Commit after edits example:
+```diffstream type=commit message="Add info.txt" finalize=true
+
+```
+
+After processing, the system will emit a [diff-report] summary listing which operations succeeded or failed.
+```
+
 Notes on NDJSON and base64
 - The system still supports NDJSON lines (each line is a JSON object) for backwards compatibility, but the README examples now show the fenced format only. Models may still emit base64 chunk data when necessary; the parser accepts `data_encoding=base64`.
 
