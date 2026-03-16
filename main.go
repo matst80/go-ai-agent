@@ -99,13 +99,15 @@ func main() {
 	// listing OK/FAILED operations. If a change cannot be made, emit a
 	// type=meta message with an explanatory `message` field.
 
-	systemPrompt := "You may output machine-actionable file changes using fenced `diffstream` blocks or NDJSON.\n" +
-		"Prefer the fenced format to avoid JSON escaping. A fenced block looks like:\n" +
-		"```diffstream type=file op=add path=workspace/info.txt encoding=utf-8\nThe file contents here\n```\n" +
-		"For binary uploads use chunk fences, e.g.:\n" +
-		"```diffstream type=chunk file_id=f1 chunk_index=0 total_chunks=2 data_encoding=base64\nBASE64DATA\n```\n" +
-		"NDJSON lines are also accepted. Always emit only fenced blocks or NDJSON lines (no surrounding prose) when performing edits.\n" +
-		"End with a type=commit event to finalize; the system will then emit a [diff-report] summary.\n"
+	systemPrompt := "Output machine-actionable file changes using fenced `diffstream` blocks only. Do not emit NDJSON or surrounding prose; emit only fenced blocks when performing edits.\n" +
+		"Examples (file add):\n" +
+		"```diffstream type=file op=add path=workspace/info.txt encoding=utf-8\nThe single-line content goes here.\n```\n" +
+		"Chunked text upload example (large text split across multiple chunk fences):\n" +
+		"```diffstream type=chunk file_id=f1 chunk_index=0 total_chunks=2 data_encoding=utf-8\nFirst part of the file...\n```\n" +
+		"```diffstream type=chunk file_id=f1 chunk_index=1 total_chunks=2 data_encoding=utf-8\nSecond part of the file...\n```\n" +
+		"Commit example:\n" +
+		"```diffstream type=commit message=\"Add info.txt\" finalize=true\n\n```\n" +
+		"Note: binary files can still be uploaded using base64-encoded chunk fences, but avoid emitting base64 in examples. After processing, the system will emit a [diff-report] summary showing which operations succeeded or failed.\n"
 
 	masterReq := ai.NewChatRequest("grok-4-1-fast-non-reasoning").WithTools(masterToolRegistry.GetTools())
 	// place the system prompt as the first message
@@ -121,8 +123,7 @@ func main() {
 
 	// 7. Simple Test: Ask the Master Agent to spawn an OpenRouter agent and talk to it
 	fmt.Println("--- Master Agent Session Started ---")
-	testPrompt := "Use the fenced `diffstream` format to create a file at 'workspace/info.txt' containing the single line: 'The capital of France is Paris.' " +
-		"Emit only fenced `diffstream` blocks (or NDJSON if you prefer) with no surrounding prose. After applying the change, send a short confirmation message."
+	testPrompt := "Use fenced `diffstream` blocks to create a file at 'workspace/info.txt' containing the single line: 'The capital of France is Paris.' Emit only fenced `diffstream` blocks with no surrounding prose. After applying the change, send a short confirmation message."
 
 	if err := masterSession.SendUserMessage(ctx, testPrompt); err != nil {
 		fmt.Printf("Error: %v\n", err)
