@@ -1,6 +1,10 @@
 package ai
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+	"time"
+)
 
 // TruncationStrategy defines the interface for message history truncation strategies.
 type TruncationStrategy interface {
@@ -127,4 +131,321 @@ func truncateContent(content string, maxLen int) string {
 		return content
 	}
 	return content[:maxLen] + "..."
+}
+
+// SummarizeTruncator summarizes a block of messages by sending them to the
+// configured ChatClientInterface and replacing the block with a single summary
+// message. It follows the same high-level pattern as MiddleTruncator but calls
+// out to a client to produce the summary.
+type SummarizeTruncator struct {
+	Threshold     int                 // Minimum message count before summarization kicks in
+	RemoveCount   int                 // Number of messages to summarize (approx)
+	Client        ChatClientInterface // Client used to obtain the summary
+	Model         string              // model to use for summarization (optional)
+	SummaryPrompt string              // system prompt to guide summarization
+	Timeout       time.Duration       // timeout for the summarization call
+	// TokenEstimateThreshold triggers a pre-compression step when the
+	// estimated token count of the selected messages exceeds this value.
+	// If zero, no pre-compression is performed.
+	TokenEstimateThreshold int
+	Logger                 Logger
+}
+
+// SummarizeOptions configures a SummarizeTruncator when created via constructor.
+type SummarizeOptions struct {
+	Threshold              int
+	RemoveCount            int
+	Model                  string
+	SummaryPrompt          string
+	Timeout                time.Duration
+	TokenEstimateThreshold int
+	Logger                 Logger
+}
+
+// NewSummarizeTruncator creates a SummarizeTruncator with sensible defaults.
+// If opts is nil, default values are applied. Client may be nil to disable
+// summarization (Apply will be a no-op).
+func NewSummarizeTruncator(client ChatClientInterface, opts *SummarizeOptions) *SummarizeTruncator {
+	var o SummarizeOptions
+	if opts != nil {
+		o = *opts
+	}
+	if o.Threshold == 0 {
+		o.Threshold = 50
+	}
+	if o.RemoveCount == 0 {
+		o.RemoveCount = 10
+	}
+	if o.Timeout == 0 {
+		o.Timeout = 10 * time.Second
+	}
+	if o.TokenEstimateThreshold == 0 {
+		o.TokenEstimateThreshold = 2000
+	}
+	return &SummarizeTruncator{
+		Threshold:              o.Threshold,
+		RemoveCount:            o.RemoveCount,
+		Client:                 client,
+		Model:                  o.Model,
+		SummaryPrompt:          o.SummaryPrompt,
+		Timeout:                o.Timeout,
+		TokenEstimateThreshold: o.TokenEstimateThreshold,
+		Logger:                 o.Logger,
+	}
+}
+
+// Apply implements TruncationStrategy for SummarizeTruncator.
+func (s *SummarizeTruncator) Apply(messages []Message) ([]Message, int) {
+	if s.Client == nil {
+		// No client configured; behave like MiddleTruncator by doing nothing
+		if s.Logger != nil {
+			s.Logger.Warnf("[SummarizeTruncator] No client configured. Skipping summarization.")
+		}
+		return messages, 0
+	}
+
+	if len(messages) <= s.Threshold {
+		return messages, 0
+	}
+
+	totalToRemove := s.RemoveCount
+	lastMessageIndex := len(messages) - 1
+
+	// Identify removable indices (not system/user and not the last message)
+	removableIndices := make([]int, 0)
+	for i := range messages {
+		if i != lastMessageIndex && !isSystemOrUserMessage(messages[i]) {
+			removableIndices = append(removableIndices, i)
+		}
+	}
+
+	if len(removableIndices) == 0 {
+		if s.Logger != nil {
+			s.Logger.Infof("[SummarizeTruncator] No removable messages available.")
+		}
+		return messages, 0
+	}
+
+	// Select indices to summarize (prefer middle)
+	toRemove := s.selectMiddleMessages(messages, totalToRemove, removableIndices, lastMessageIndex)
+
+	// Build chat request: include a guiding system prompt and the messages to summarize
+	req := NewChatRequest(s.Model)
+	if s.SummaryPrompt != "" {
+		req.AddMessage(MessageRoleSystem, s.SummaryPrompt)
+	} else {
+		req.AddMessage(MessageRoleSystem, "Summarize the following conversation into a concise summary with key points and actions.")
+	}
+
+	// Append the messages to be summarized in chronological order
+	// Use AddMessageStruct which copies the Message struct
+	// We only want the content and role as context for summarization
+	// Append in order of indices
+	sorted := make([]int, len(toRemove))
+	copy(sorted, toRemove)
+	// simple sort (they are already in ascending order from selectMiddleMessages, but ensure)
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j] < sorted[i] {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+
+	for _, idx := range sorted {
+		req.AddMessageStruct(&messages[idx])
+	}
+
+	// If token estimation threshold is configured, estimate tokens for the block
+	// and perform a pre-compression step if it exceeds the threshold.
+	if s.TokenEstimateThreshold > 0 {
+		estimated := estimateTokenCountForIndices(messages, sorted)
+		if estimated > s.TokenEstimateThreshold {
+			if s.Logger != nil {
+				s.Logger.Infof("[SummarizeTruncator] Estimated tokens %d > threshold %d: performing pre-compression", estimated, s.TokenEstimateThreshold)
+			} else {
+				fmt.Printf("[SummarizeTruncator] Estimated tokens %d > threshold %d: performing pre-compression\n", estimated, s.TokenEstimateThreshold)
+			}
+
+			compReq := NewChatRequest(s.Model)
+			compReq.AddMessage(MessageRoleSystem, "Compress the following conversation into a short, high-density summary (aim for <= 200 tokens). Keep only key facts and actions.")
+			for _, idx := range sorted {
+				compReq.AddMessageStruct(&messages[idx])
+			}
+
+			compCtx, compCancel := context.WithTimeout(context.Background(), s.Timeout)
+			compResp, compErr := s.Client.Chat(compCtx, *compReq)
+			compCancel()
+			if compErr == nil && compResp != nil && compResp.Message.Content != "" {
+				// Replace the detailed block with a single user message containing the compressed text
+				compressedMsg := Message{Role: MessageRoleUser, Content: compResp.Message.Content}
+				// Rebuild req to contain only system prompt + compressed content
+				req = NewChatRequest(s.Model)
+				if s.SummaryPrompt != "" {
+					req.AddMessage(MessageRoleSystem, s.SummaryPrompt)
+				} else {
+					req.AddMessage(MessageRoleSystem, "Summarize the following conversation into a concise summary with key points and actions.")
+				}
+				req.AddMessageStruct(&compressedMsg)
+			} else {
+				if s.Logger != nil {
+					s.Logger.Warnf("[SummarizeTruncator] Pre-compression failed: %v; continuing with original block", compErr)
+				} else {
+					fmt.Printf("[SummarizeTruncator] Pre-compression failed: %v; continuing with original block\n", compErr)
+				}
+			}
+		}
+	}
+
+	// Call the client with a timeout
+	ctx, cancel := context.WithTimeout(context.Background(), s.Timeout)
+	defer cancel()
+
+	resp, err := s.Client.Chat(ctx, *req)
+	if err != nil || resp == nil || resp.Message.Content == "" {
+		if s.Logger != nil {
+			s.Logger.Warnf("[SummarizeTruncator] Summarization failed: %v. Falling back to truncation.", err)
+		} else {
+			fmt.Printf("[SummarizeTruncator] Summarization failed: %v. Falling back to truncation.\n", err)
+		}
+		// Fallback: simply remove the selected messages (like MiddleTruncator)
+		result := make([]Message, 0, len(messages)-len(toRemove))
+		removedCount := 0
+		toRemoveMap := make(map[int]struct{}, len(toRemove))
+		for _, v := range toRemove {
+			toRemoveMap[v] = struct{}{}
+		}
+		for i, msg := range messages {
+			if _, ok := toRemoveMap[i]; !ok {
+				result = append(result, msg)
+			} else {
+				removedCount++
+				if s.Logger != nil {
+					s.Logger.Infof("[SummarizeTruncator] Removed message %d (role: %s): %q", i, msg.Role, truncateContent(msg.Content, 50))
+				} else {
+					fmt.Printf("[SummarizeTruncator] Removed message %d (role: %s): %q\n", i, msg.Role, truncateContent(msg.Content, 50))
+				}
+			}
+		}
+		return result, removedCount
+	}
+
+	summaryContent := fmt.Sprintf("[Summary of %d messages]\n\n%s", len(toRemove), resp.Message.Content)
+	summaryMsg := Message{Role: MessageRoleAssistant, Content: summaryContent}
+
+	// New behavior: after successful summarization, preserve only system prompts
+	// and the generated summary message.
+	result := make([]Message, 0, 1+len(messages))
+	for _, msg := range messages {
+		if msg.Role == MessageRoleSystem {
+			result = append(result, msg)
+		}
+	}
+	result = append(result, summaryMsg)
+
+	removedCount := len(messages) - len(result)
+	if s.Logger != nil {
+		s.Logger.Infof("[SummarizeTruncator] Summarized %d messages into 1 summary; preserved %d system messages.", len(toRemove), len(result)-1)
+	} else {
+		fmt.Printf("[SummarizeTruncator] Summarized %d messages into 1 summary; preserved %d system messages.\n", len(toRemove), len(result)-1)
+	}
+	return result, removedCount
+}
+
+// estimateTokenCountForIndices provides a very rough token estimate for the
+// concatenation of message contents at the given indices. This is intentionally
+// conservative and cheap: we estimate tokens by counting words and applying a
+// multiplier to approximate subword tokenization. It's not exact but is fine
+// for deciding whether a pre-compression step should run.
+func estimateTokenCountForIndices(messages []Message, indices []int) int {
+	if len(indices) == 0 {
+		return 0
+	}
+	totalWords := 0
+	for _, idx := range indices {
+		if idx < 0 || idx >= len(messages) {
+			continue
+		}
+		// split on spaces
+		totalWords += len(splitWords(messages[idx].Content))
+	}
+	// heuristic: average tokens per word ~= 1.3 (subword tokens)
+	return int(float64(totalWords) * 1.3)
+}
+
+func splitWords(s string) []string {
+	if s == "" {
+		return nil
+	}
+	// simple split by whitespace
+	fields := make([]string, 0)
+	word := ""
+	for _, r := range s {
+		if r == ' ' || r == '\n' || r == '\t' || r == '\r' {
+			if word != "" {
+				fields = append(fields, word)
+				word = ""
+			}
+			continue
+		}
+		word += string(r)
+	}
+	if word != "" {
+		fields = append(fields, word)
+	}
+	return fields
+}
+
+// selectMiddleMessages selects which messages to remove from the middle.
+func (s *SummarizeTruncator) selectMiddleMessages(messages []Message, count int, removableIndices []int, lastMsgIdx int) []int {
+	if len(removableIndices) == 0 {
+		return nil
+	}
+
+	selected := make([]int, 0, count)
+
+	for i, idx := range removableIndices {
+		if idx == lastMsgIdx {
+			continue
+		}
+
+		isEarly := i < len(removableIndices)/3
+		isLate := i > 2*len(removableIndices)/3
+
+		if !isEarly && !isLate {
+			selected = append(selected, idx)
+			if len(selected) >= count {
+				break
+			}
+		}
+	}
+
+	if len(selected) < count {
+		for _, idx := range removableIndices {
+			if idx == lastMsgIdx {
+				continue
+			}
+			if !s.isInSlice(idx, selected) {
+				selected = append(selected, idx)
+				if len(selected) >= count {
+					break
+				}
+			}
+		}
+	}
+
+	if len(selected) > count {
+		return selected[:count]
+	}
+	return selected
+}
+
+// isInSlice checks if an integer is in a slice.
+func (s *SummarizeTruncator) isInSlice(target int, slice []int) bool {
+	for _, v := range slice {
+		if v == target {
+			return true
+		}
+	}
+	return false
 }

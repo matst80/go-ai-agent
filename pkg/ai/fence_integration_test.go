@@ -5,15 +5,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// Integration test: feed a fenced diffstream block via AttachMessageParserToAccumulator
-// and verify DefaultOperationHandler wrote the file and committed when commit op is sent.
-func TestFenceIntegration_WriteAndCommit(t *testing.T) {
+// Integration test: feed a fenced git diff block through the generic block
+// parser/handler flow and verify the diff is applied.
+func TestFenceIntegration_ApplyDiffThroughBlockHandler(t *testing.T) {
 	tmp := t.TempDir()
 	repo := tmp
-	// init git repo in tmp and set basic config so commits succeed
+
 	if out, err := exec.Command("git", "-C", repo, "init").CombinedOutput(); err != nil {
 		t.Fatalf("git init in tmp failed: %v: %s", err, string(out))
 	}
@@ -24,53 +25,53 @@ func TestFenceIntegration_WriteAndCommit(t *testing.T) {
 		t.Fatalf("git config user.email failed: %v: %s", err, string(out))
 	}
 
-	// create parser and handler
+	original := "package main\n\nfunc add(a int, b int) int {\n\treturn a + b\n}\n"
+	mainPath := filepath.Join(repo, "main.go")
+	if err := os.WriteFile(mainPath, []byte(original), 0o644); err != nil {
+		t.Fatalf("write seed file failed: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", repo, "add", "main.go").CombinedOutput(); err != nil {
+		t.Fatalf("git add seed file failed: %v: %s", err, string(out))
+	}
+	if out, err := exec.Command("git", "-C", repo, "commit", "-m", "seed").CombinedOutput(); err != nil {
+		t.Fatalf("git commit seed file failed: %v: %s", err, string(out))
+	}
+
+	parser := NewFenceParser()
 	dp := NewDiffParser(repo)
-	dp.SetHandler(&DefaultOperationHandler{})
+	handler := NewGitDiffBlockHandler(dp)
 
-	// build fenced message that adds a file
-	content := "hello world\n"
-	fence := "```diffstream type=file op=add path=info.txt encoding=utf-8\n" + content + "\n```"
+	diff := "```diff\n" +
+		"--- a/main.go\n" +
+		"+++ b/main.go\n" +
+		"@@ -1,5 +1,6 @@\n" +
+		" package main\n" +
+		" \n" +
+		" func add(a int, b int) int {\n" +
+		"+\t// Computes the sum of two integer arguments\n" +
+		" \treturn a + b\n" +
+		" }\n" +
+		"```"
+
 	acc := make(chan *AccumulatedResponse, 2)
-	out := AttachMessageParserToAccumulator(context.Background(), acc, NewFenceParser(), dp)
+	out := AttachBlockParserToAccumulator(context.Background(), acc, parser, handler)
 
-	// send the accumulated response
-	acc <- &AccumulatedResponse{Chunk: &ChatResponse{Message: Message{Content: fence}}}
+	acc <- &AccumulatedResponse{
+		Chunk: &ChatResponse{
+			Message: Message{Content: diff},
+		},
+	}
 	close(acc)
 
-	// drain out channel
 	for range out {
 	}
 
-	// verify file exists
-	got, err := os.ReadFile(filepath.Join(repo, "info.txt"))
+	got, err := os.ReadFile(mainPath)
 	if err != nil {
-		t.Fatalf("expected file written: %v", err)
+		t.Fatalf("expected patched file: %v", err)
 	}
-	if string(got) != content+"\n" && string(got) != content {
-		t.Fatalf("content mismatch: %q", string(got))
-	}
-
-	// now commit via a commit message fence
-	acc2 := make(chan *AccumulatedResponse, 2)
-	out2 := AttachMessageParserToAccumulator(context.Background(), acc2, NewFenceParser(), dp)
-	acc2 <- &AccumulatedResponse{Chunk: &ChatResponse{Message: Message{Content: "```diffstream type=commit message=\"test commit\" finalize=true\n\n```"}}}
-	close(acc2)
-	for range out2 {
-	}
-
-	// Confirm that the OperationHandler produced a commit report
-	reports := dp.PopReports()
-	found := false
-	for _, r := range reports {
-		if r.Op == "commit" {
-			found = true
-			if !r.Success {
-				t.Fatalf("commit reported failure: %s", r.Message)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("expected commit report, none found; reports=%+v", reports)
+	wantFragment := "\t// Computes the sum of two integer arguments\n\treturn a + b\n"
+	if !strings.Contains(string(got), wantFragment) {
+		t.Fatalf("patched content missing fragment %q in %q", wantFragment, string(got))
 	}
 }

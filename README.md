@@ -1,88 +1,134 @@
-Fenced diffstream support
-=========================
+Fenced git diff support
+=======================
 
-This repository now accepts machine-actionable streamed file edits using a simple, model-friendly fenced format called `diffstream` (in addition to the prior NDJSON path). The fenced format avoids JSON escaping and is easier for models to emit reliably.
+This repository accepts machine-actionable streamed file edits using fenced Git-style unified diffs.
 
 Key points
-- Preferred input: fenced blocks that start with ```diffstream and include header attributes on the opening line (e.g. `type=file op=add path=workspace/info.txt encoding=utf-8`).
-- Supported operations: `file` (add/update/delete/patch), `chunk` (multi-part uploads), `commit` (finalize), and meta/control messages like `done`/`init`/`meta`.
-- Chunk fences can use `data_encoding=utf-8` for chunked text (recommended in examples) or `data_encoding=base64` for binary uploads — base64 is supported but omitted from examples to keep them simple.
-- AgentSession is wired to use the FenceParser by default; the streamed parser will apply operations to a `repoRoot` and report results as `[diff-report]` when the stream ends.
+- Preferred input: fenced blocks that start with ` ```diff `.
+- The body of the fence must be an exact unified git diff.
+- The parser reads fenced diff blocks across streamed chunks and emits typed `StreamedBlock` values.
+- Parsed `diff` blocks are applied to the configured `repoRoot` with `git apply`.
+- `AgentSession` is wired to use the fenced block parser and git diff block handler by default.
+- The older `diffstream` and NDJSON parsing path has been removed from the fenced edit flow.
 
 Fenced format overview
-- Opening fence: ```diffstream [headers...]
-- Body: any text representing file contents, chunk data, or a unified patch
-- Closing fence: ```
+- Opening fence: ` ```diff `
+- Body: exact unified git diff text
+- Closing fence: ` ``` `
 
-Header attributes (common)
-- `type` — one of `file`, `chunk`, `commit`, `meta`.
-- `op` — for `type=file`: `add`, `update`, `delete`, `patch`.
-- `path` — relative POSIX path for file operations.
-- `encoding` or `content_encoding` — `utf-8` or `unified` (for unified diffs).
-- `file_id`, `chunk_index`, `total_chunks`, `data_encoding` — for chunked uploads.
-- `message`, `finalize` — for commits.
+Example
+-------
 
-Examples
-
-Add a small UTF-8 text file (recommended):
-
-```diffstream type=file op=add path=workspace/info.txt encoding=utf-8
-The capital of France is Paris.
+```diff
+--- a/main.go
++++ b/main.go
+@@ -12,5 +12,5 @@ func add(a int, b int) int {
+ }
++// Computes the sum of two integer arguments
+-// add is a simple function that returns the sum of two integers
+ func main() {
 ```
 
-Chunked text upload (split into two fenced chunks):
+The system should output only the exact git diff inside the fenced block when making edits.
 
-```diffstream type=chunk file_id=f1 chunk_index=0 total_chunks=2 data_encoding=utf-8
-First half of a large text file...
+Creating new files
+------------------
+
+Yes — a git diff can create files that do not already exist.
+
+Use the standard unified diff form for new files, for example:
+
+```diff
+diff --git a/docs/example.txt b/docs/example.txt
+new file mode 100644
+--- /dev/null
++++ b/docs/example.txt
+@@ -0,0 +1,3 @@
++first line
++second line
++third line
 ```
-```diffstream type=chunk file_id=f1 chunk_index=1 total_chunks=2 data_encoding=utf-8
-Second half of the large text file...
-```
 
-Commit after edits (finalize):
+Deleting files is also supported with standard git diff syntax, for example:
 
-```diffstream type=commit message="Add info.txt" finalize=true
-
+```diff
+diff --git a/old.txt b/old.txt
+deleted file mode 100644
+--- a/old.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-old line 1
+-old line 2
 ```
 
 System prompt example
 ---------------------
-Use the following system prompt as a starting point when creating agent system messages. It tells the model to emit only fenced `diffstream` blocks and gives brief instructions and examples:
+
+Use the following system prompt as a starting point when creating agent system messages:
 
 ```text
-Output machine-actionable file changes using fenced `diffstream` blocks only. Do not emit NDJSON or surrounding prose; emit only fenced blocks when performing edits.
+Output machine-actionable file changes using fenced `diff` blocks only.
+Do not emit surrounding prose; emit only fenced diff blocks when performing edits.
 
-Examples (file add):
-```diffstream type=file op=add path=workspace/info.txt encoding=utf-8
-The single-line content goes here.
+The contents of each fenced block must be an exact git unified diff that can be applied with `git apply`.
+
+Example:
+```diff
+diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -12,5 +12,5 @@ func add(a int, b int) int {
+ }
++// Computes the sum of two integer arguments
+-// add is a simple function that returns the sum of two integers
+ func main() {
+```
 ```
 
-Chunked text upload example (split across two chunk fences):
-```diffstream type=chunk file_id=f1 chunk_index=0 total_chunks=2 data_encoding=utf-8
-First part of the content...
-```
-```diffstream type=chunk file_id=f1 chunk_index=1 total_chunks=2 data_encoding=utf-8
-Second part of the content...
-```
+Architecture
+------------
 
-Commit after edits example:
-```diffstream type=commit message="Add info.txt" finalize=true
+The streamed edit pipeline is now organized around generic fenced blocks:
 
-```
+- `StreamedBlock`
+  - a typed extracted block with:
+    - `Type string`
+    - `Content string`
 
-After processing, the system will emit a [diff-report] summary listing which operations succeeded or failed.
-```
+- `BlockParser`
+  - parses accumulated streamed output into typed blocks
 
-Notes on NDJSON and base64
-- The system still supports NDJSON lines (each line is a JSON object) for backwards compatibility, but the README examples now show the fenced format only. Models may still emit base64 chunk data when necessary; the parser accepts `data_encoding=base64`.
+- `BlockHandler`
+  - handles parsed blocks by block type
 
-Agent integration (how to enable)
-- The session constructor supports configuration options:
+Current concrete implementation:
 
-  - `ai.WithRepoRoot(path)` — set the repository/workspace root where file operations are applied.
-  - `ai.WithOperationHandler(handler)` — provide a custom `OperationHandler` implementation. The repo already includes `ai.DefaultOperationHandler` that writes files, reassembles chunks under `.stream/`, runs `git apply` for unified diffs and `git add`/`commit` on commit requests.
+- `FenceParser`
+  - extracts exact fenced `diff` blocks from streamed model output
 
-Example: wire the master session to use a repo and the default handler (see `main.go`):
+- `GitDiffBlockHandler`
+  - handles `diff` blocks and forwards them to `DiffParser`
+
+- `DiffParser`
+  - applies unified diffs
+  - records operation reports
+  - can also commit repository changes
+
+Notes
+-----
+- For modifications to existing files, emit a normal unified diff.
+- For new files, use `--- /dev/null` and `+++ b/path/to/file`.
+- For deleted files, use `--- a/path/to/file` and `+++ /dev/null`.
+- Binary files are not a good fit for this fenced diff format; use another transport format if needed.
+- After processing, the system may emit a `[diff-report]` summary listing which operations succeeded or failed.
+
+Agent integration
+-----------------
+- `ai.WithRepoRoot(path)` sets the repository/workspace root where diffs are applied.
+- `ai.WithOperationHandler(handler)` lets you provide a custom `OperationHandler`.
+- The included `ai.DefaultOperationHandler` applies unified diffs with `git apply` and can commit staged changes.
+
+Example:
 
 ```go
 masterSession := ai.NewAgentSession(ctx, masterClient, masterReq,
@@ -92,21 +138,35 @@ masterSession := ai.NewAgentSession(ctx, masterClient, masterReq,
 ```
 
 Tests
-- Unit tests for the fence parser live in `pkg/ai/fence_parser_test.go`.
-- An integration test demonstrating fenced file write + commit is `pkg/ai/fence_integration_test.go`.
-- Run tests with:
+-----
+- Unit tests for the fenced block parser live in `pkg/ai/fence_parser_test.go`.
+- Integration coverage for fenced diff application lives in `pkg/ai/fence_integration_test.go`.
+- Diff application tests live in `pkg/ai/git_diff_test.go`.
 
-```bash
-go test ./pkg/ai
-```
+The parser tests cover:
+- exact `diff` fences
+- chunked streamed fences across multiple calls
+- multiple fenced blocks in one response
+- ignoring invalid or non-exact fence headers
+- preserving raw diff body content
+- incomplete fence buffering
 
 Files of interest
-- `pkg/ai/fence_parser.go` — fence parsing implementation.
-- `pkg/ai/diffstream.go` — DiffParser, message handling, default operation handler.
+-----------------
+- `pkg/ai/fence_parser.go` — fenced block parsing and block dispatch integration.
+- `pkg/ai/git_diff.go` — unified diff application, commit handling, and git diff block handling.
+- `pkg/ai/message_parser.go` — shared `StreamedBlock`, `BlockParser`, and `BlockHandler` types.
 - `main.go` — example master session and prompts illustrating usage.
 
-Next steps / suggestions
-- If you want NDJSON removed entirely from code paths, we can deprecate that parser and provide a configuration option to enable NDJSON-only sessions.
-- Add README examples for advanced scenarios (binary chunking with base64, unified diffs) if needed for clients.
+Current status
+--------------
+- The fenced parser path is fully block-based.
+- The legacy `diffstream` parser abstraction has been removed from the fenced edit flow.
+- NDJSON prompt aliases and compatibility parsing have been removed.
+- Naming now reflects the git-diff-based design instead of the old `diffstream` terminology.
 
-If you want me to add the README content to another file or expand any example, tell me which section to expand.
+Future ideas
+------------
+- Extend `FenceParser` to support additional exact block types beyond `diff`.
+- Add more block handlers for other machine-actionable fenced formats.
+- Add more end-to-end tests for deletion patches and commit flows.

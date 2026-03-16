@@ -246,16 +246,14 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 		}
 	}()
 
-	// Create a DiffParser and attach it to the accumulated stream so file/patch
-	// NDJSON events are processed as they arrive. Replace the repoRoot below
+	// Create a DiffParser and attach it to the accumulated stream so parsed
+	// fenced blocks can be handled as they arrive. Replace the repoRoot below
 	// with your workspace/repo path or wire it via an AgentSession option.
 	repo := "."
 	if a.repoRoot != "" {
 		repo = a.repoRoot
 	}
 	parser := NewDiffParser(repo)
-	// Optionally set custom handlers:
-	// parser.SetFileHandler(func(ctx context.Context, m *StreamMessage) error { ... })
 	if a.opHandler != nil {
 		parser.SetHandler(a.opHandler)
 	}
@@ -263,9 +261,9 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 	a.diffParser = parser
 
 	// Use StreamAccumulator to get accumulated responses and attach the
-	// fence-based message parser so fenced diffstream blocks are parsed
+	// generic fenced block parser so exact fenced git diff blocks are parsed
 	// before other consumers see the accumulated messages.
-	accCh := AttachMessageParserToAccumulator(ctx, StreamAccumulator(ctx, ch, false), NewFenceParser(), parser)
+	accCh := AttachBlockParserToAccumulator(ctx, StreamAccumulator(ctx, ch, false), NewFenceParser(), NewGitDiffBlockHandler(parser))
 
 	go func() {
 		var last *AccumulatedResponse
