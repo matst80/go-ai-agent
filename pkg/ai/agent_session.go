@@ -50,6 +50,7 @@ type AgentSession struct {
 	opHandler OperationHandler
 	// internal parser instance (set when a stream starts)
 	diffParser *DiffParser
+	stopOnce   sync.Once
 }
 
 // TruncationConfig holds optional truncation settings for a session.
@@ -109,8 +110,10 @@ func (a *AgentSession) Recv() <-chan AccumulatedResponse {
 
 // Stop cancels the session context and closes the global channel.
 func (a *AgentSession) Stop() {
-	a.cancel()
-	close(a.globalChan)
+	a.stopOnce.Do(func() {
+		a.cancel()
+		close(a.globalChan)
+	})
 }
 
 // SendUserMessage appends a user message to the request and triggers a streaming chat.
