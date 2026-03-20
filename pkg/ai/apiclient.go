@@ -19,6 +19,8 @@ type ApiClient struct {
 	BaseUrl    string
 	// LogPath if set will cause requests and responses to be appended to this file.
 	LogPath string
+	// endpoint if set will be prepended to all request paths
+	endpoint string
 }
 
 // Package-level default log path used when creating new ApiClient instances.
@@ -104,12 +106,26 @@ func (c *ApiClient) WithLogFile(path string) *ApiClient {
 	return c
 }
 
+// WithEndpoint sets the base endpoint path that will be prepended to all requests.
+func (c *ApiClient) WithEndpoint(endpoint string) *ApiClient {
+	c.endpoint = endpoint
+	return c
+}
+
 func (c *ApiClient) SetHeaders(headers map[string]string) {
 	c.headers = headers
 }
 
 func (c *ApiClient) newRequest(ctx context.Context, method string, endpoint string, body io.Reader) (*http.Request, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, method, fmt.Sprintf("%s/%s", c.BaseUrl, endpoint), body)
+	fullEndpoint := c.endpoint
+	if endpoint != "" {
+		if fullEndpoint != "" {
+			fullEndpoint = fmt.Sprintf("%s/%s", fullEndpoint, endpoint)
+		} else {
+			fullEndpoint = endpoint
+		}
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, method, fmt.Sprintf("%s/%s", c.BaseUrl, fullEndpoint), body)
 	if err != nil {
 		return httpReq, err
 	}

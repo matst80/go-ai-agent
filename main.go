@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/matst80/go-ai-agent/pkg/ai"
+	"github.com/matst80/go-ai-agent/pkg/github"
 	"github.com/matst80/go-ai-agent/pkg/mcp"
 	"github.com/matst80/go-ai-agent/pkg/ollama"
 	"github.com/matst80/go-ai-agent/pkg/openrouter"
@@ -69,6 +70,23 @@ func main() {
 			return ai.NewAgentSession(ctx, client, req)
 		},
 	))
+	registry.RegisterAgent("github", ai.NewAgentDefinition(
+		"GitHub Agent",
+		"Cloud LLM powered by GitHub Models",
+		func(ctx context.Context, content string) ai.AgentSessionInterface {
+			client := github.NewGitHubClient(os.Getenv("GITHUB_TOKEN"), "")
+			if lp := os.Getenv("AI_LOG_PATH"); lp != "" {
+				client.WithLogFile(lp)
+			}
+			model := os.Getenv("GITHUB_MODEL")
+			if model == "" {
+				model = "gpt-4o"
+			}
+			req := ai.NewChatRequest(model)
+			req.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: content}}
+			return ai.NewAgentSession(ctx, client, req)
+		},
+	))
 
 	// 4. Create RegistryToolHandler to expose registry operations as tools
 	toolHandler := ai.NewRegistryToolHandler(registry)
@@ -98,9 +116,8 @@ func main() {
 		}
 	}()
 
-	// 7. Setup Master Agent (using xAI here, but could be Gemini/Ollama)
-	masterClient := xai.NewXAIClient("https://api.x.ai/v1", os.Getenv("XAI_API_KEY"))
-	// Ensure master client logging is enabled locally as well when configured.
+	// Setup Master Agent (using GitHub for verification)
+	masterClient := github.NewGitHubClient(os.Getenv("GITHUB_TOKEN"), "")
 	if lp := os.Getenv("AI_LOG_PATH"); lp != "" {
 		masterClient.WithLogFile(lp)
 	}
@@ -112,7 +129,7 @@ func main() {
 		"For new files, use standard git diff format such as --- /dev/null and +++ b/path/to/file.\n" +
 		"After processing, the system will emit a [diff-report] summary showing which operations succeeded or failed.\n"
 
-	masterReq := ai.NewChatRequest("grok-4-1-fast-non-reasoning").WithTools(masterToolRegistry.GetTools())
+	masterReq := ai.NewChatRequest("gpt-4o").WithTools(masterToolRegistry.GetTools())
 	// place the system prompt as the first message
 	masterReq.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: systemPrompt}}
 

@@ -18,6 +18,22 @@ type ChatCompletionChunk struct {
 	Choices  []Choice `json:"choices"`
 }
 
+// ChatCompletion represents a non-streaming chat completion response
+type ChatCompletion struct {
+	ID      string       `json:"id"`
+	Object  string       `json:"object"`
+	Created int64        `json:"created"`
+	Model   string       `json:"model"`
+	Choices []FullChoice `json:"choices"`
+}
+
+// FullChoice represents a choice in a non-streaming completion
+type FullChoice struct {
+	Index        int           `json:"index"`
+	Message      OpenAIMessage `json:"message"`
+	FinishReason string        `json:"finish_reason"`
+}
+
 // Choice represents a choice in the completion chunk
 type Choice struct {
 	Index              int     `json:"index"`
@@ -120,6 +136,50 @@ func (c *ChatCompletionChunk) ToChatResponse() *ai.ChatResponse {
 	}
 
 	return resp
+}
+
+// ToChatResponse converts a ChatCompletion to an ai.ChatResponse.
+func (c *ChatCompletion) ToChatResponse() *ai.ChatResponse {
+	if len(c.Choices) == 0 {
+		return &ai.ChatResponse{
+			BaseResponse: &ai.BaseResponse{
+				Model:     c.Model,
+				CreatedAt: time.Unix(c.Created, 0),
+			},
+		}
+	}
+
+	choice := c.Choices[0]
+	msg := ai.Message{
+		Role:             choice.Message.Role,
+		Content:          choice.Message.Content,
+		ReasoningContent: choice.Message.ReasoningContent,
+	}
+
+	if len(choice.Message.ToolCalls) > 0 {
+		for _, tc := range choice.Message.ToolCalls {
+			idx := tc.Index
+			msg.ToolCalls = append(msg.ToolCalls, ai.ToolCall{
+				Index: idx,
+				ID:    tc.ID,
+				Type:  tc.Type,
+				Function: ai.FunctionCall{
+					Name:      tc.Function.Name,
+					Arguments: json.RawMessage(tc.Function.Arguments),
+				},
+			})
+		}
+	}
+
+	return &ai.ChatResponse{
+		BaseResponse: &ai.BaseResponse{
+			Model:      c.Model,
+			CreatedAt:  time.Unix(c.Created, 0),
+			Done:       true,
+			DoneReason: choice.FinishReason,
+		},
+		Message: msg,
+	}
 }
 
 // --- Strongly typed OpenAI request structures and helper conversion --- //
