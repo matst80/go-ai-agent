@@ -191,6 +191,12 @@ func NewChatRequest(model string) *ChatRequest {
 	return r
 }
 
+// NewDefaultChatRequest creates a new ChatRequest with an empty model,
+// signaling that the client's default model should be used.
+func NewDefaultChatRequest() *ChatRequest {
+	return NewChatRequest("")
+}
+
 // AddMessage adds a simple message to the request
 func (r *ChatRequest) AddMessage(role MessageRole, content string) *ChatRequest {
 	// for _, msg := range r.Messages {

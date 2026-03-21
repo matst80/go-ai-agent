@@ -15,8 +15,9 @@ const DefaultURL = "https://models.github.ai"
 
 // GitHubClient handles interaction with the GitHub Models Inference API
 type GitHubClient struct {
-	client     *ai.ApiClient
-	apiVersion string
+	client       *ai.ApiClient
+	defaultModel string
+	apiVersion   string
 }
 
 // NewGitHubClient creates a new GitHub client
@@ -47,8 +48,17 @@ func (c *GitHubClient) WithLogFile(path string) *GitHubClient {
 	return c
 }
 
+// WithDefaultModel sets the default model to use if no model is specified in a request.
+func (c *GitHubClient) WithDefaultModel(model string) *GitHubClient {
+	c.defaultModel = model
+	return c
+}
+
 // Chat handles a non-streaming request to GitHub Models
 func (c *GitHubClient) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
+	if req.Model == "" {
+		req.Model = c.defaultModel
+	}
 	req.Stream = false
 	oaReq := openai.ToOpenAIChatRequest(&req)
 
@@ -73,6 +83,9 @@ func (c *GitHubClient) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatRe
 
 // ChatStreamed handles the streaming request to GitHub Models
 func (c *GitHubClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch chan *ai.ChatResponse) error {
+	if req.Model == "" {
+		req.Model = c.defaultModel
+	}
 	req.Stream = true
 	oaReq := openai.ToOpenAIChatRequest(&req)
 	defer close(ch)

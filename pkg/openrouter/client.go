@@ -13,8 +13,9 @@ import (
 
 // OpenRouterClient handles interaction with the OpenRouter API
 type OpenRouterClient struct {
-	client  *ai.ApiClient
-	logPath string
+	client       *ai.ApiClient
+	defaultModel string
+	logPath      string
 }
 
 type OpenRouterEndpoint string
@@ -37,8 +38,17 @@ func (c *OpenRouterClient) WithLogFile(path string) *OpenRouterClient {
 	return c
 }
 
+// WithDefaultModel sets the default model to use if no model is specified in a request.
+func (c *OpenRouterClient) WithDefaultModel(model string) *OpenRouterClient {
+	c.defaultModel = model
+	return c
+}
+
 // Chat handles a non-streaming request to OpenRouter and returns the full ChatResponse
 func (c *OpenRouterClient) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
+	if req.Model == "" {
+		req.Model = c.defaultModel
+	}
 	req.Stream = false
 
 	// Convert to strongly-typed OpenRouter request where function arguments are JSON strings.
@@ -73,6 +83,9 @@ var DONE = []byte("[DONE]")
 
 // ChatStreamed handles the streaming request to OpenRouter and returns an error if the request or streaming fails.
 func (c *OpenRouterClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch chan *ai.ChatResponse) error {
+	if req.Model == "" {
+		req.Model = c.defaultModel
+	}
 	req.Stream = true
 	defer close(ch)
 

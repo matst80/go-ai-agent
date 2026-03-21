@@ -32,7 +32,7 @@ func TestGitHubClient_ChatStreamed_ToolCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewGitHubClient(server.URL, "test-token", "")
+	client := NewGitHubClient("test-token", "")
 	req := ai.NewChatRequest("test-model")
 	ch := make(chan *ai.ChatResponse, 10)
 
@@ -99,7 +99,7 @@ func TestGitHubClient_GetModels(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewGitHubClient(server.URL, "test-token", "")
+	client := NewGitHubClient("test-token", "")
 	models, err := client.GetModels(context.Background())
 	if err != nil {
 		t.Fatalf("GetModels failed: %v", err)

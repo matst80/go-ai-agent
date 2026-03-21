@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/matst80/go-ai-agent/pkg/ai"
@@ -12,6 +11,7 @@ import (
 	"github.com/matst80/go-ai-agent/pkg/mcp"
 	"github.com/matst80/go-ai-agent/pkg/ollama"
 	"github.com/matst80/go-ai-agent/pkg/openrouter"
+	"github.com/matst80/go-ai-agent/pkg/terminal"
 	"github.com/matst80/go-ai-agent/pkg/tools"
 	"github.com/matst80/go-ai-agent/pkg/xai"
 )
@@ -34,8 +34,8 @@ func main() {
 		"Ollama Agent",
 		"Local LLM powered by Ollama (llama3)",
 		func(ctx context.Context, content string) ai.AgentSessionInterface {
-			client := ollama.NewOllamaClient("http://localhost:11434")
-			req := ai.NewChatRequest("qwen3.5:4b")
+			client := ollama.NewOllamaClient("http://localhost:11434").WithDefaultModel("qwen3.5:4b")
+			req := ai.NewDefaultChatRequest()
 			req.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: content}}
 			return ai.NewAgentSession(ctx, client, req)
 		},
@@ -46,12 +46,12 @@ func main() {
 		"xAI Agent",
 		"Cloud LLM powered by xAI (grok-beta)",
 		func(ctx context.Context, content string) ai.AgentSessionInterface {
-			client := xai.NewXAIClient("https://api.x.ai/v1", os.Getenv("XAI_API_KEY"))
+			client := xai.NewXAIClient("https://api.x.ai/v1", os.Getenv("XAI_API_KEY")).WithDefaultModel("grok-beta")
 			// If a global log path is configured, make sure the client also has its local log path set.
 			if lp := os.Getenv("AI_LOG_PATH"); lp != "" {
 				client.WithLogFile(lp)
 			}
-			req := ai.NewChatRequest("grok-beta")
+			req := ai.NewDefaultChatRequest()
 			req.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: content}}
 			return ai.NewAgentSession(ctx, client, req)
 		},
@@ -60,12 +60,12 @@ func main() {
 		"OpenRouter Agent",
 		"Cloud LLM powered by OpenRouter (hunter-alpha)",
 		func(ctx context.Context, content string) ai.AgentSessionInterface {
-			client := openrouter.NewOpenRouterClient("https://openrouter.ai", os.Getenv("OPENROUTER_API_KEY"))
+			client := openrouter.NewOpenRouterClient("https://openrouter.ai", os.Getenv("OPENROUTER_API_KEY")).WithDefaultModel("openrouter/hunter-alpha")
 			// Ensure the OpenRouter client also gets its logfile set if provided.
 			if lp := os.Getenv("AI_LOG_PATH"); lp != "" {
 				client.WithLogFile(lp)
 			}
-			req := ai.NewChatRequest("openrouter/hunter-alpha")
+			req := ai.NewDefaultChatRequest()
 			req.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: content}}
 			return ai.NewAgentSession(ctx, client, req)
 		},
@@ -74,15 +74,15 @@ func main() {
 		"GitHub Agent",
 		"Cloud LLM powered by GitHub Models",
 		func(ctx context.Context, content string) ai.AgentSessionInterface {
-			client := github.NewGitHubClient(os.Getenv("GITHUB_TOKEN"), "")
-			if lp := os.Getenv("AI_LOG_PATH"); lp != "" {
-				client.WithLogFile(lp)
-			}
 			model := os.Getenv("GITHUB_MODEL")
 			if model == "" {
 				model = "gpt-4o"
 			}
-			req := ai.NewChatRequest(model)
+			client := github.NewGitHubClient(os.Getenv("GITHUB_TOKEN"), "").WithDefaultModel(model)
+			if lp := os.Getenv("AI_LOG_PATH"); lp != "" {
+				client.WithLogFile(lp)
+			}
+			req := ai.NewDefaultChatRequest()
 			req.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: content}}
 			return ai.NewAgentSession(ctx, client, req)
 		},
@@ -117,7 +117,7 @@ func main() {
 	}()
 
 	// Setup Master Agent (using GitHub for verification)
-	masterClient := github.NewGitHubClient(os.Getenv("GITHUB_TOKEN"), "")
+	masterClient := ollama.NewOllamaClient("http://localhost:11434").WithDefaultModel("qwen3.5:9b")
 	if lp := os.Getenv("AI_LOG_PATH"); lp != "" {
 		masterClient.WithLogFile(lp)
 	}
@@ -129,7 +129,7 @@ func main() {
 		"For new files, use standard git diff format such as --- /dev/null and +++ b/path/to/file.\n" +
 		"After processing, the system will emit a [diff-report] summary showing which operations succeeded or failed.\n"
 
-	masterReq := ai.NewChatRequest("gpt-4o").WithTools(masterToolRegistry.GetTools())
+	masterReq := ai.NewChatRequest("qwen3.5:9b").WithTools(masterToolRegistry.GetTools())
 	// place the system prompt as the first message
 	masterReq.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: systemPrompt}}
 
@@ -148,77 +148,33 @@ func main() {
 		Logger:                 ai.NoopLogger{},
 	})
 
+	executor := tools.NewToolExecutor(masterToolRegistry)
 	masterSession := ai.NewAgentSession(ctx, masterClient, masterReq,
 		ai.WithRepoRoot(repoRoot),
 		ai.WithOperationHandler(&ai.DefaultOperationHandler{}),
 		ai.WithTruncation(summarizer),
+		executor.AgentSessionOption(func(tr tools.ToolResult) {
+			if tr.Err != nil {
+				fmt.Printf("\n[tool error] %s\n", tr.Err)
+			} else {
+				fmt.Printf("\n[tool result] %s\n", tr.Content)
+			}
+		}),
 	)
 	defer masterSession.Stop()
-	executor := tools.NewToolExecutor(masterToolRegistry)
 
 	// 8. Simple Test: Ask the Master Agent to navigate with browser and screenshot
 	fmt.Println("--- Master Agent Session Started ---")
-	testPrompt := "List available tools. Then, use a browser tool to navigate to google.com. Tell me what you see."
+	testPrompt := "List available tools. Then, use a browser tool to navigate to google.com. Does it contain a search field?"
 
 	if err := masterSession.SendUserMessage(ctx, testPrompt); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
 
-	var lastLines []string
+	updater := terminal.NewTTYUpdater()
 	for res := range masterSession.Recv() {
-		// Handle Tool Calls
-		if res.Chunk.Done && len(res.ToolCalls) > 0 {
-			results, err := executor.HandleCalls(ctx, res.ToolCalls)
-			if err != nil {
-				fmt.Printf("Tool execution error: %v\n", err)
-			}
-
-			var resultMsgs []ai.Message
-			for _, tr := range results {
-				msg := tr.ToResultMessage()
-				resultMsgs = append(resultMsgs, *msg)
-				fmt.Printf("\n[tool result] %s\n", msg.Content)
-			}
-
-			if len(resultMsgs) > 0 {
-				if err := masterSession.SendMessages(ctx, resultMsgs...); err != nil {
-					fmt.Printf("failed to deliver tool results: %v\n", err)
-				}
-			}
-		}
-
-		// UI Output (live update)
-		if res.Content != "" {
-			outStr := res.Content
-			lines := strings.Split(strings.TrimRight(outStr, "\n"), "\n")
-
-			diffLine := 0
-			for diffLine < len(lines) && diffLine < len(lastLines) && lines[diffLine] == lastLines[diffLine] {
-				diffLine++
-			}
-
-			if diffLine == len(lines) && len(lines) == len(lastLines) {
-				if res.Chunk.Done && len(res.ToolCalls) == 0 {
-					break
-				}
-				continue
-			}
-
-			if len(lastLines) > 0 {
-				moveUp := len(lastLines) - diffLine
-				if moveUp > 0 {
-					fmt.Printf("\033[%dA\r\033[J", moveUp)
-				}
-			}
-
-			for i := diffLine; i < len(lines); i++ {
-				fmt.Println(lines[i])
-			}
-			lastLines = lines
-		}
-
-		if res.Chunk.Done && len(res.ToolCalls) == 0 {
+		if updater.Handle(res) {
 			break
 		}
 	}
@@ -233,65 +189,14 @@ func main() {
 	}
 
 	// 2. Ask the Master Agent to spawn an OpenRouter agent and talk to it
-	testPrompt2 := "Can you search for the weather in tokyo in the browser?"
+	testPrompt2 := "Can you enter 'slask' in the search field on the current page in the browser?"
 	if err := masterSession.SendUserMessage(ctx, testPrompt2); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
 
 	for res := range masterSession.Recv() {
-		// Handle Tool Calls
-		if res.Chunk.Done && len(res.ToolCalls) > 0 {
-			results, err := executor.HandleCalls(ctx, res.ToolCalls)
-			if err != nil {
-				fmt.Printf("Tool execution error: %v\n", err)
-			}
-
-			var resultMsgs []ai.Message
-			for _, tr := range results {
-				msg := tr.ToResultMessage()
-				resultMsgs = append(resultMsgs, *msg)
-				fmt.Printf("\n[tool result] %s\n", msg.Content)
-			}
-
-			if len(resultMsgs) > 0 {
-				if err := masterSession.SendMessages(ctx, resultMsgs...); err != nil {
-					fmt.Printf("failed to deliver tool results: %v\n", err)
-				}
-			}
-		}
-
-		// UI Output (live update)
-		if res.Content != "" {
-			outStr := res.Content
-			lines := strings.Split(strings.TrimRight(outStr, "\n"), "\n")
-
-			diffLine := 0
-			for diffLine < len(lines) && diffLine < len(lastLines) && lines[diffLine] == lastLines[diffLine] {
-				diffLine++
-			}
-
-			if diffLine == len(lines) && len(lines) == len(lastLines) {
-				if res.Chunk.Done && len(res.ToolCalls) == 0 {
-					break
-				}
-				continue
-			}
-
-			if len(lastLines) > 0 {
-				moveUp := len(lastLines) - diffLine
-				if moveUp > 0 {
-					fmt.Printf("\033[%dA\r\033[J", moveUp)
-				}
-			}
-
-			for i := diffLine; i < len(lines); i++ {
-				fmt.Println(lines[i])
-			}
-			lastLines = lines
-		}
-
-		if res.Chunk.Done && len(res.ToolCalls) == 0 {
+		if updater.Handle(res) {
 			break
 		}
 	}

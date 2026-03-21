@@ -10,6 +10,12 @@ import (
 
 type AgentSessionOption func(*AgentSession)
 
+type AutoToolResult struct {
+	CallID  string
+	Content string
+	Err     error
+}
+
 type AgentSessionInterface interface {
 	SendUserMessage(ctx context.Context, msg string) error
 	SendMessages(ctx context.Context, msgs ...Message) error
@@ -20,6 +26,7 @@ type AgentSessionInterface interface {
 	GetState() AgentState
 	SetState(update func(*AgentState))
 	SetTools(tools []Tool)
+	SetClient(client ChatClientInterface)
 }
 
 // AgentState holds the current status and metadata of an agent session
@@ -51,6 +58,8 @@ type AgentSession struct {
 	// internal parser instance (set when a stream starts)
 	diffParser *DiffParser
 	stopOnce   sync.Once
+
+	autoToolHandler func(context.Context, []ToolCall) ([]Message, []AutoToolResult, error)
 }
 
 // TruncationConfig holds optional truncation settings for a session.
@@ -100,6 +109,17 @@ func WithOperationHandler(h OperationHandler) AgentSessionOption {
 func WithTruncation(strategy TruncationStrategy) AgentSessionOption {
 	return func(a *AgentSession) {
 		a.truncationConfig = &TruncationConfig{Strategy: strategy}
+	}
+}
+
+// WithAutoToolExecutor configures the session to automatically execute tool calls
+// emitted at the end of a response and feed the tool result messages back into the
+// same session. The callback is optional and is invoked once for each tool result.
+func WithAutoToolExecutor(
+	handler func(context.Context, []ToolCall) ([]Message, []AutoToolResult, error),
+) AgentSessionOption {
+	return func(a *AgentSession) {
+		a.autoToolHandler = handler
 	}
 }
 
@@ -184,6 +204,13 @@ func (a *AgentSession) SetTools(tools []Tool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.rec.Tools = tools
+}
+
+// SetClient updates the underlying client used by the session.
+func (a *AgentSession) SetClient(client ChatClientInterface) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.client = client
 }
 
 // streamChat performs the streamed chat request and pipes the results into GlobalChan.
@@ -299,6 +326,19 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 				ToolCalls:        last.ToolCalls,
 			})
 			a.mu.Unlock()
+
+			if last.Chunk != nil && last.Chunk.Done && len(last.ToolCalls) > 0 && a.autoToolHandler != nil {
+				resultMsgs, _, err := a.autoToolHandler(ctx, last.ToolCalls)
+				if err != nil {
+					fmt.Printf("Tool execution error: %v\n", err)
+				}
+
+				if len(resultMsgs) > 0 {
+					if err := a.SendMessages(ctx, resultMsgs...); err != nil {
+						fmt.Printf("failed to deliver tool results: %v\n", err)
+					}
+				}
+			}
 
 			// If the diff parser produced operation reports, emit a summary message back
 			if a.diffParser != nil {

@@ -13,8 +13,9 @@ import (
 
 // XAIClient handles interaction with the xAI API
 type XAIClient struct {
-	client  *ai.ApiClient
-	logPath string
+	client       *ai.ApiClient
+	defaultModel string
+	logPath      string
 }
 
 type XAIEndpoint string
@@ -39,8 +40,17 @@ func (c *XAIClient) WithLogFile(path string) *XAIClient {
 	return c
 }
 
+// WithDefaultModel sets the default model to use if no model is specified in a request.
+func (c *XAIClient) WithDefaultModel(model string) *XAIClient {
+	c.defaultModel = model
+	return c
+}
+
 /* Chat handles a non-streaming request to xAI and returns the full ChatResponse */
 func (c *XAIClient) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
+	if req.Model == "" {
+		req.Model = c.defaultModel
+	}
 	req.Stream = false
 
 	// Convert to strongly-typed XAI request where function arguments are JSON strings.
@@ -70,6 +80,9 @@ func (c *XAIClient) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatRespo
 
 /* ChatStreamed handles the streaming request to xAI and returns an error if the request or streaming fails. */
 func (c *XAIClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch chan *ai.ChatResponse) error {
+	if req.Model == "" {
+		req.Model = c.defaultModel
+	}
 	req.Stream = true
 	defer close(ch)
 

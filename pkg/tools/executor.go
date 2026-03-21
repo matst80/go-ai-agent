@@ -190,6 +190,34 @@ func (e *ToolExecutor) HandleCalls(ctx context.Context, calls []ai.ToolCall) ([]
 	return res, nil
 }
 
+func (e *ToolExecutor) AgentSessionOption(onResult func(ToolResult)) ai.AgentSessionOption {
+	return ai.WithAutoToolExecutor(func(ctx context.Context, calls []ai.ToolCall) ([]ai.Message, []ai.AutoToolResult, error) {
+		results, err := e.HandleCalls(ctx, calls)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		resultMsgs := make([]ai.Message, 0, len(results))
+		autoResults := make([]ai.AutoToolResult, 0, len(results))
+
+		for _, tr := range results {
+			if onResult != nil {
+				onResult(tr)
+			}
+
+			msg := tr.ToResultMessage()
+			resultMsgs = append(resultMsgs, *msg)
+			autoResults = append(autoResults, ai.AutoToolResult{
+				CallID:  tr.CallID,
+				Content: tr.Content,
+				Err:     tr.Err,
+			})
+		}
+
+		return resultMsgs, autoResults, nil
+	})
+}
+
 func resultString(results []reflect.Value) string {
 	if len(results) == 0 {
 		return "ok"
