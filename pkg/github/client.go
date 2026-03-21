@@ -103,12 +103,9 @@ func (c *GitHubClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch 
 		return fmt.Errorf("GitHub request failed with status %d", resp.StatusCode)
 	}
 
-	var chunk openai.ChatCompletionChunk
-	handler := ai.DataJsonChunkReader(&chunk, func(cjk *openai.ChatCompletionChunk) bool {
+	handler := ai.DataJsonChunkReader(func(cjk *openai.ChatCompletionChunk) bool {
 		// Use the mapping logic from openai package
 		ch <- cjk.ToChatResponse()
-		// Reset chunk for next unmarshal to avoid picking up old fields
-		*cjk = openai.ChatCompletionChunk{}
 		return false
 	})
 
@@ -147,3 +144,6 @@ func (c *GitHubClient) GetModels(ctx context.Context) ([]ModelInfo, error) {
 
 	return models, nil
 }
+
+// Verify interface compliance
+var _ ai.ChatClientInterface = (*GitHubClient)(nil)

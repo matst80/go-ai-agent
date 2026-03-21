@@ -108,11 +108,9 @@ func (c *OpenRouterClient) ChatStreamed(ctx context.Context, req ai.ChatRequest,
 		return fmt.Errorf("OpenRouter request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var chatResp ChatCompletionChunk
 
-	handler := ai.DataJsonChunkReader(&chatResp, func(chunk *ChatCompletionChunk) bool {
+	handler := ai.DataJsonChunkReader(func(chunk *ChatCompletionChunk) bool {
 		ch <- chunk.ToChatResponse()
-		chatResp = ChatCompletionChunk{} // reset for next chunk
 		return false
 	})
 

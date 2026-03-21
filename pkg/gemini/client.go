@@ -77,17 +77,13 @@ func (c *GeminiClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch 
 		return fmt.Errorf("Gemini streaming request failed with status %d: %s", resp.StatusCode, bodyText)
 	}
 
-	var geminiResp GeminiResponse
-	handler := ai.DataJsonChunkReader(&geminiResp, func(chunk *GeminiResponse) bool {
+	handler := ai.DataJsonChunkReader(func(chunk *GeminiResponse) bool {
 		ch <- chunk.ToChatResponse()
-		geminiResp = GeminiResponse{} // reset for next chunk
-
 		return false
 	})
 
 	// Gemini SSE format sends "data: {...}" lines
 	// The DataJsonChunkReader in pkg/ai/chunk_reader.go should handle this if it's set up correctly.
-	// Let's verify DataJsonChunkReader in pkg/ai/chunk_reader.go
 	if err := ai.ChunkReader(ctx, resp.Body, handler); err != nil {
 		// If it's a context cancellation, we don't return error
 		if ctx.Err() != nil {

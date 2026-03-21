@@ -116,12 +116,9 @@ func (c *OllamaClient) ChatStreamed(ctx context.Context, ireq ai.ChatRequest, ch
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("ollama request failed with status %d", resp.StatusCode)
 	}
-	chatResp := &ai.ChatResponse{}
-	handler := ai.JsonChunkReader(chatResp, func(data *ai.ChatResponse) (stop bool) {
+	handler := ai.JsonChunkReader(func(data *ai.ChatResponse) (stop bool) {
 		ch <- data
-		done := data.Done
-		chatResp = &ai.ChatResponse{} // reset for next chunk
-		return done
+		return data.Done
 	})
 
 	err = ai.ChunkReader(ctx, resp.Body, handler)
@@ -280,10 +277,8 @@ func (c *OllamaClient) CreateModelStreamed(ctx context.Context, req CreateReques
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("ollama request failed with status %d", resp.StatusCode)
 	}
-	var createResp CreateResponse
-	jsonHandler := ai.JsonChunkReader(&createResp, func(data *CreateResponse) (stop bool) {
+	jsonHandler := ai.JsonChunkReader(func(data *CreateResponse) (stop bool) {
 		ch <- data
-		createResp = CreateResponse{}   // reset for next chunk
 		return data.Status == "success" // stop if creation is complete
 	})
 

@@ -15,15 +15,16 @@ import (
 // returns true the reader will stop processing further lines.
 type ChunkHandler func(line []byte) (stop bool)
 
-func JsonChunkReader[T any](data *T, handler func(*T) bool) ChunkHandler {
+func JsonChunkReader[T any](handler func(*T) bool) ChunkHandler {
 	return func(line []byte) (stop bool) {
 		//log.Println(string(line))
-		if err := json.Unmarshal(line, data); err != nil {
+		var data T
+		if err := json.Unmarshal(line, &data); err != nil {
 			// skip malformed chunk
-			log.Printf("error parsing %s", line)
+			log.Printf("error parsing %s, err: %s", line, err)
 			return false
 		}
-		return handler(data)
+		return handler(&data)
 	}
 }
 
@@ -32,7 +33,7 @@ var DONE = []byte("[DONE]")
 var DATA_DONE = []byte("data: [DONE]")
 var DATA_PREFIX_LEN = len(DATA_PREFIX)
 
-func DataJsonChunkReader[T any](data *T, handler func(*T) bool) ChunkHandler {
+func DataJsonChunkReader[T any](handler func(*T) bool) ChunkHandler {
 	return func(input []byte) (stop bool) {
 		if bytes.Equal(input, DONE) || bytes.Equal(input, DATA_DONE) {
 			return true
@@ -43,11 +44,12 @@ func DataJsonChunkReader[T any](data *T, handler func(*T) bool) ChunkHandler {
 			return false
 		}
 
-		if err := json.Unmarshal(input[DATA_PREFIX_LEN:], data); err != nil {
+		var data T
+		if err := json.Unmarshal(input[DATA_PREFIX_LEN:], &data); err != nil {
 			log.Printf("error parsing: %s, err: %s", input, err)
 			return false
 		}
-		return handler(data)
+		return handler(&data)
 	}
 }
 

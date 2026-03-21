@@ -85,11 +85,9 @@ func (c *OpenAIClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch 
 		return fmt.Errorf("OpenAI request failed with status %d", resp.StatusCode)
 	}
 
-	var chatResp ChatCompletionChunk
 
-	handler := ai.DataJsonChunkReader(&chatResp, func(chunk *ChatCompletionChunk) bool {
+	handler := ai.DataJsonChunkReader(func(chunk *ChatCompletionChunk) bool {
 		ch <- chunk.ToChatResponse()
-		chatResp = ChatCompletionChunk{} // reset for next chunk
 		return false
 	})
 

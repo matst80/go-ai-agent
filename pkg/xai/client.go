@@ -105,11 +105,9 @@ func (c *XAIClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch cha
 		return fmt.Errorf("xAI request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var chatResp ChatCompletionChunk
 
-	handler := ai.DataJsonChunkReader(&chatResp, func(chunk *ChatCompletionChunk) bool {
+	handler := ai.DataJsonChunkReader(func(chunk *ChatCompletionChunk) bool {
 		ch <- chunk.ToChatResponse()
-		chatResp = ChatCompletionChunk{} // reset for next chunk
 		return false
 	})
 
