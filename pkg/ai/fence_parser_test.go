@@ -95,7 +95,7 @@ func TestFenceParser_ChunkedAcrossCalls_GitDiffBlock(t *testing.T) {
 	}
 }
 
-func TestFenceParser_IgnoresNonExactDiffFence(t *testing.T) {
+func TestFenceParser_ExtractsAnyFenceType(t *testing.T) {
 	p := NewFenceParser()
 	ctx := context.Background()
 
@@ -109,8 +109,11 @@ func TestFenceParser_IgnoresNonExactDiffFence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	if len(blocks) != 0 {
-		t.Fatalf("expected 0 blocks for non-exact diff fence, got %d", len(blocks))
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block for diffstream fence, got %d", len(blocks))
+	}
+	if blocks[0].Type != "diffstream" {
+		t.Fatalf("expected type=diffstream, got %q", blocks[0].Type)
 	}
 }
 
@@ -163,7 +166,7 @@ func TestFenceParser_MultipleBlocks(t *testing.T) {
 	}
 }
 
-func TestFenceParser_IgnoresUnknownFenceType(t *testing.T) {
+func TestFenceParser_ExtractsJsonFenceType(t *testing.T) {
 	p := NewFenceParser()
 	ctx := context.Background()
 
@@ -177,8 +180,11 @@ func TestFenceParser_IgnoresUnknownFenceType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	if len(blocks) != 0 {
-		t.Fatalf("expected 0 blocks for unknown fence type, got %d", len(blocks))
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block for json fence type, got %d", len(blocks))
+	}
+	if blocks[0].Type != "json" {
+		t.Fatalf("expected type=json, got %q", blocks[0].Type)
 	}
 }
 

@@ -28,24 +28,36 @@ func JsonChunkReader[T any](handler func(*T) bool) ChunkHandler {
 	}
 }
 
-var DATA_PREFIX = []byte("data: ")
+var DATA_PREFIX = []byte("data:")
 var DONE = []byte("[DONE]")
 var DATA_DONE = []byte("data: [DONE]")
 var DATA_PREFIX_LEN = len(DATA_PREFIX)
 
 func DataJsonChunkReader[T any](handler func(*T) bool) ChunkHandler {
 	return func(input []byte) (stop bool) {
+		// handle both data: [DONE] and [DONE]
 		if bytes.Equal(input, DONE) || bytes.Equal(input, DATA_DONE) {
 			return true
 		}
 
-		// Expect lines to start with the data prefix
+		// Expect lines to start with the data prefix (as per SSE specification)
 		if !bytes.HasPrefix(input, DATA_PREFIX) {
 			return false
 		}
 
+		// As per SSE spec, if it's 'data: ', we skip one space after the colon if it exists.
+		// Our DATA_PREFIX is 'data:'.
+		payload := input[DATA_PREFIX_LEN:]
+		if len(payload) > 0 && payload[0] == ' ' {
+			payload = payload[1:]
+		}
+
+		if len(payload) == 0 {
+			return false
+		}
+
 		var data T
-		if err := json.Unmarshal(input[DATA_PREFIX_LEN:], &data); err != nil {
+		if err := json.Unmarshal(payload, &data); err != nil {
 			log.Printf("error parsing: %s, err: %s", input, err)
 			return false
 		}
@@ -77,7 +89,10 @@ func ChunkReader(ctx context.Context, r io.Reader, handler ChunkHandler) error {
 
 		line, err := reader.ReadBytes('\n')
 		// If we got data even with an error (like io.EOF), we'll still want to process it.
-		clean := bytes.TrimSpace(line)
+		// Important: we only trim the trailing newline/carriage return to preserve
+		// any leading/trailing spaces within the chunk if it's treated as raw content,
+		// and to handle the optional leading space in SSE 'data: ' lines correctly.
+		clean := bytes.TrimRight(line, "\r\n")
 		if len(clean) > 0 {
 			// If handler returns true, stop reading further chunks.
 			if handler(clean) {

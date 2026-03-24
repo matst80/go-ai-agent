@@ -121,8 +121,10 @@ func (c *OllamaClient) ChatStreamed(ctx context.Context, ireq ai.ChatRequest, ch
 	req.Stream = true
 	defer close(ch)
 
+	log.Printf("[Ollama] ChatStreamed starting for model %s", req.Model)
 	resp, err := c.client.PostJson(ctx, string(ChatEndpoint), req)
 	if err != nil {
+		log.Printf("[Ollama] PostJson failed: %v", err)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -131,8 +133,10 @@ func (c *OllamaClient) ChatStreamed(ctx context.Context, ireq ai.ChatRequest, ch
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("[Ollama] Request failed with status %d", resp.StatusCode)
 		return fmt.Errorf("ollama request failed with status %d", resp.StatusCode)
 	}
+	log.Printf("[Ollama] Request successful, starting to read chunks")
 	handler := ai.JsonChunkReader(func(data *ai.ChatResponse) (stop bool) {
 		ch <- data
 		return data.Done

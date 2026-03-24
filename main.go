@@ -165,7 +165,7 @@ func main() {
 
 	// 8. Simple Test: Ask the Master Agent to navigate with browser and screenshot
 	fmt.Println("--- Master Agent Session Started ---")
-	testPrompt := "List available tools. Then, use a browser tool to navigate to google.com. Does it contain a search field?"
+	testPrompt := "List available tools. Then, use a browser tool to navigate to google.com. save a summary as googlepage.md?"
 
 	if err := masterSession.SendUserMessage(ctx, testPrompt); err != nil {
 		fmt.Printf("Error: %v\n", err)

@@ -27,6 +27,7 @@ type AgentSessionInterface interface {
 	SetState(update func(*AgentState))
 	SetTools(tools []Tool)
 	SetClient(client ChatClientInterface)
+	SetHooks(hooks ...SessionHooks)
 }
 
 // AgentState holds the current status and metadata of an agent session
@@ -61,6 +62,7 @@ type AgentSession struct {
 
 	autoToolHandler func(context.Context, []ToolCall) ([]Message, []AutoToolResult, error)
 	OnChatRequest   func(context.Context, *ChatRequest) error
+	hooks           []SessionHooks
 }
 
 // TruncationConfig holds optional truncation settings for a session.
@@ -131,6 +133,13 @@ func WithOnChatRequest(hook func(context.Context, *ChatRequest) error) AgentSess
 	}
 }
 
+// WithHooks returns an AgentSessionOption that registers one or more session hooks.
+func WithHooks(hooks ...SessionHooks) AgentSessionOption {
+	return func(a *AgentSession) {
+		a.hooks = append(a.hooks, hooks...)
+	}
+}
+
 // Recv returns a receive-only channel for all chat responses across multiple turns.
 func (a *AgentSession) Recv() <-chan AccumulatedResponse {
 	return a.globalChan
@@ -164,6 +173,12 @@ func (a *AgentSession) SendMessages(ctx context.Context, msgs ...Message) error 
 	// Apply truncation if configured (must run while locked)
 	a.applyTruncationLocked()
 	return a.streamChat(ctx)
+}
+
+func (a *AgentSession) SetHooks(hooks ...SessionHooks) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.hooks = hooks
 }
 
 // applyTruncationLocked applies the configured truncation strategy to a.rec.Messages.
@@ -226,6 +241,11 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 	if a.OnChatRequest != nil {
 		if err := a.OnChatRequest(ctx, a.rec); err != nil {
 			return fmt.Errorf("OnChatRequest hook failed: %w", err)
+		}
+	}
+	for _, h := range a.hooks {
+		if err := h.OnChatRequest(ctx, a.rec); err != nil {
+			return fmt.Errorf("Session hook OnChatRequest failed: %w", err)
 		}
 	}
 	ch := make(chan *ChatResponse)
@@ -305,10 +325,17 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 	// store parser on session for later inspection (e.g., PopReports)
 	a.diffParser = parser
 
+	// Build a list of block handlers
+	var handlers []BlockHandler
+	handlers = append(handlers, NewGitDiffBlockHandler(parser))
+	if len(a.hooks) > 0 {
+		handlers = append(handlers, &hooksBlockHandler{hooks: a.hooks})
+	}
+
 	// Use StreamAccumulator to get accumulated responses and attach the
 	// generic fenced block parser so exact fenced git diff blocks are parsed
 	// before other consumers see the accumulated messages.
-	accCh := AttachBlockParserToAccumulator(ctx, StreamAccumulator(ctx, ch, false), NewFenceParser(), NewGitDiffBlockHandler(parser))
+	accCh := AttachBlockParserToAccumulator(ctx, StreamAccumulator(ctx, ch, false), NewFenceParser(), multiBlockHandler(handlers))
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -319,6 +346,19 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 		var last *AccumulatedResponse
 		for res := range accCh {
 			last = res
+
+			// Call thinking and content hooks if we have a chunk with deltas
+			if res.Chunk != nil && res.Chunk.Message.ReasoningContent != "" {
+				for _, h := range a.hooks {
+					h.OnThinking(ctx, res.Chunk.Message.ReasoningContent)
+				}
+			}
+			if res.Chunk != nil && res.Chunk.Message.Content != "" {
+				for _, h := range a.hooks {
+					h.OnContent(ctx, res.Chunk.Message.Content)
+				}
+			}
+
 			select {
 			case a.globalChan <- *res:
 			case <-a.ctx.Done():
@@ -341,9 +381,23 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 			a.mu.Unlock()
 
 			if last.Chunk != nil && last.Chunk.Done && len(last.ToolCalls) > 0 && a.autoToolHandler != nil {
-				resultMsgs, _, err := a.autoToolHandler(ctx, last.ToolCalls)
+				// Call OnBeforeToolCall hooks
+				for _, h := range a.hooks {
+					if err := h.OnBeforeToolCall(ctx, last.ToolCalls); err != nil {
+						fmt.Printf("Session hook OnBeforeToolCall failed: %v\n", err)
+						// Continue with tool execution or abort?
+						// For now, only abort if the client wants us to (later we might add return handle)
+					}
+				}
+
+				resultMsgs, results, err := a.autoToolHandler(ctx, last.ToolCalls)
 				if err != nil {
 					fmt.Printf("Tool execution error: %v\n", err)
+				}
+
+				// Call OnAfterToolCall hooks
+				for _, h := range a.hooks {
+					h.OnAfterToolCall(ctx, last.ToolCalls, resultMsgs, results)
 				}
 
 				if len(resultMsgs) > 0 {
@@ -387,7 +441,47 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 				}
 			}
 		}
+
+		// Notify OnDone hook
+		if last != nil {
+			for _, h := range a.hooks {
+				h.OnDone(ctx, *last)
+			}
+		}
+
+		// Handle error hooks if terminal was reached with an error
+		if last != nil && last.Chunk != nil && last.Chunk.Error != nil {
+			errStr := *last.Chunk.Error
+			for _, h := range a.hooks {
+				h.OnError(ctx, fmt.Errorf("%s", errStr))
+			}
+		}
 	}()
 
 	return nil
+}
+
+type hooksBlockHandler struct {
+	hooks []SessionHooks
+}
+
+func (h *hooksBlockHandler) HandleBlock(ctx context.Context, block *StreamedBlock) error {
+	for _, hook := range h.hooks {
+		hook.OnBlock(ctx, block.Type, block.Content)
+	}
+	return nil
+}
+
+type multiBlockHandler []BlockHandler
+
+func (m multiBlockHandler) HandleBlock(ctx context.Context, block *StreamedBlock) error {
+	var firstErr error
+	for _, h := range m {
+		if err := h.HandleBlock(ctx, block); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
 }

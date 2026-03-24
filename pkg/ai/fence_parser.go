@@ -53,10 +53,6 @@ func (p *FenceParser) ParseBlocks(ctx context.Context, res *AccumulatedResponse)
 			input = input[3:]
 			continue
 		}
-		if header != "diff" {
-			input = input[3:]
-			continue
-		}
 
 		bodyAndTail := input[newlineOffset+1:]
 		endOffset := strings.Index(bodyAndTail, "\n```")
