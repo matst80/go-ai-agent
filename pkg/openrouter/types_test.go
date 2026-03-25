@@ -199,3 +199,81 @@ func TestChatCompletionChunk_ToolCallsRaw(t *testing.T) {
 		t.Errorf("Expected arguments {\"command\": \"df -h\"}, got %s", string(tc.Function.Arguments))
 	}
 }
+
+func TestToOpenRouterChatRequest(t *testing.T) {
+	t.Run("SimpleText", func(t *testing.T) {
+		req := ai.ChatRequest{
+			Messages: []ai.Message{
+				{Role: ai.MessageRoleUser, Content: "Hello"},
+			},
+		}
+		orReq := ToOpenRouterChatRequest(&req)
+		if len(orReq.Messages) != 1 {
+			t.Fatalf("Expected 1 message, got %d", len(orReq.Messages))
+		}
+		if orReq.Messages[0].Content != "Hello" {
+			t.Errorf("Expected content 'Hello', got %v", orReq.Messages[0].Content)
+		}
+	})
+
+	t.Run("WithImages", func(t *testing.T) {
+		req := ai.ChatRequest{
+			Messages: []ai.Message{
+				{
+					Role:    ai.MessageRoleUser,
+					Content: "What is this?",
+					Images:  []string{"data:image/png;base64,abc"},
+				},
+			},
+		}
+		orReq := ToOpenRouterChatRequest(&req)
+		if len(orReq.Messages) != 1 {
+			t.Fatalf("Expected 1 message, got %d", len(orReq.Messages))
+		}
+
+		parts, ok := orReq.Messages[0].Content.([]OpenRouterContentPart)
+		if !ok {
+			t.Fatalf("Expected content to be []OpenRouterContentPart, got %T", orReq.Messages[0].Content)
+		}
+
+		if len(parts) != 2 {
+			t.Fatalf("Expected 2 parts, got %d", len(parts))
+		}
+
+		if parts[0].Type != "text" || parts[0].Text != "What is this?" {
+			t.Errorf("First part mismatch: %+v", parts[0])
+		}
+
+		if parts[1].Type != "image_url" || parts[1].ImageURL.URL != "data:image/png;base64,abc" {
+			t.Errorf("Second part mismatch: %+v", parts[1])
+		}
+	})
+
+	t.Run("ImageOnly", func(t *testing.T) {
+		req := ai.ChatRequest{
+			Messages: []ai.Message{
+				{
+					Role:   ai.MessageRoleUser,
+					Images: []string{"data:image/png;base64,abc"},
+				},
+			},
+		}
+		orReq := ToOpenRouterChatRequest(&req)
+		if len(orReq.Messages) != 1 {
+			t.Fatalf("Expected 1 message, got %d", len(orReq.Messages))
+		}
+
+		parts, ok := orReq.Messages[0].Content.([]OpenRouterContentPart)
+		if !ok {
+			t.Fatalf("Expected content to be []OpenRouterContentPart, got %T", orReq.Messages[0].Content)
+		}
+
+		if len(parts) != 1 {
+			t.Fatalf("Expected 1 part, got %d", len(parts))
+		}
+
+		if parts[0].Type != "image_url" || parts[0].ImageURL.URL != "data:image/png;base64,abc" {
+			t.Errorf("Part mismatch: %+v", parts[0])
+		}
+	})
+}

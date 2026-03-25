@@ -139,12 +139,23 @@ type OpenRouterToolCall struct {
 	Function OpenRouterFunction `json:"function"`
 }
 
+// OpenRouterContentPart represents a part of a multimodal message
+type OpenRouterContentPart struct {
+	Type     string              `json:"type"`
+	Text     string              `json:"text,omitempty"`
+	ImageURL *OpenRouterImageURL `json:"image_url,omitempty"`
+}
+
+// OpenRouterImageURL represents an image URL in a content part
+type OpenRouterImageURL struct {
+	URL string `json:"url"`
+}
+
 // OpenRouterMessage is the message shape for OpenRouter requests
 type OpenRouterMessage struct {
 	Role             ai.MessageRole       `json:"role"`
-	Content          string               `json:"content"`
+	Content          any                  `json:"content"` // Can be string or []OpenRouterContentPart
 	ReasoningContent string               `json:"thinking,omitempty"`
-	Images           []string             `json:"images,omitempty"`
 	ToolCalls        []OpenRouterToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string               `json:"tool_call_id,omitempty"`
 }
@@ -175,10 +186,29 @@ func ToOpenRouterChatRequest(req *ai.ChatRequest) OpenRouterChatRequest {
 	for _, m := range req.Messages {
 		orm := OpenRouterMessage{
 			Role:             m.Role,
-			Content:          m.Content,
 			ReasoningContent: m.ReasoningContent,
-			Images:           m.Images,
 			ToolCallID:       m.ToolCallID,
+		}
+
+		if len(m.Images) > 0 {
+			parts := make([]OpenRouterContentPart, 0, len(m.Images)+1)
+			if m.Content != "" {
+				parts = append(parts, OpenRouterContentPart{
+					Type: "text",
+					Text: m.Content,
+				})
+			}
+			for _, img := range m.Images {
+				parts = append(parts, OpenRouterContentPart{
+					Type: "image_url",
+					ImageURL: &OpenRouterImageURL{
+						URL: img, // We assume this is already correctly formatted (e.g. data URL) or handled by the caller.
+					},
+				})
+			}
+			orm.Content = parts
+		} else {
+			orm.Content = m.Content
 		}
 
 		if len(m.ToolCalls) > 0 {
