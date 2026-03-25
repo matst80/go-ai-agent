@@ -25,13 +25,15 @@ func (m *mockChatClient) ChatStreamed(ctx context.Context, req ChatRequest, ch c
 
 func TestRegistryTools(t *testing.T) {
 	registry := NewAgentRegistry()
-	handler := NewRegistryToolHandler(registry)
+	handler := NewRegistryToolHandler(registry, func(ctx context.Context, content string) AgentState {
+		return NewDefaultAgentState()
+	})
 
 	// Register an agent type
 	registry.RegisterAgent("echo", AgentDefinition{
 		Title:       "Echo Agent",
 		Description: "Returns whatever you send",
-		spawnFunction: func(ctx context.Context, content string) AgentSessionInterface {
+		spawnFunction: func(ctx context.Context, content string, state AgentState) AgentSessionInterface {
 			client := &mockChatClient{
 				responses: []*ChatResponse{
 					{
@@ -41,7 +43,7 @@ func TestRegistryTools(t *testing.T) {
 				},
 			}
 			req := NewChatRequest("mock")
-			return NewAgentSession(ctx, client, req)
+			return NewAgentSession(ctx, client, req, state)
 		},
 	})
 

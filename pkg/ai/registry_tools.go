@@ -8,14 +8,16 @@ import (
 
 // RegistryToolHandler provides tools for agents to interact with the AgentRegistry
 type RegistryToolHandler struct {
-	Registry *AgentRegistry
-	tools    map[string]ToolDefinition
+	Registry    *AgentRegistry
+	createState func(ctx context.Context, content string) AgentState
+	tools       map[string]ToolDefinition
 }
 
-func NewRegistryToolHandler(registry *AgentRegistry) *RegistryToolHandler {
+func NewRegistryToolHandler(registry *AgentRegistry, createState func(ctx context.Context, content string) AgentState) *RegistryToolHandler {
 	h := &RegistryToolHandler{
-		Registry: registry,
-		tools:    make(map[string]ToolDefinition),
+		Registry:    registry,
+		createState: createState,
+		tools:       make(map[string]ToolDefinition),
 	}
 	h.initTools()
 	return h
@@ -87,7 +89,8 @@ func (h *RegistryToolHandler) GetTools() []Tool {
 }
 
 func (h *RegistryToolHandler) spawnAgent(args SpawnAgentArgs) string {
-	_, err := h.Registry.SpawnAgent(context.Background(), args.TypeName, args.InstanceID, args.Content, "master")
+	state := h.createState(context.Background(), args.Content)
+	_, err := h.Registry.SpawnAgent(context.Background(), args.TypeName, args.InstanceID, args.Content, state)
 	if err != nil {
 		return fmt.Sprintf("failed to spawn agent: %v", err)
 	}
@@ -137,12 +140,12 @@ func (h *RegistryToolHandler) agentStatus(args AgentStatusArgs) string {
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Agent %s status:\n", args.InstanceID)
-	fmt.Fprintf(&sb, "  Title: %s\n", state.Title)
-	fmt.Fprintf(&sb, "  Type: %s\n", state.Type)
-	fmt.Fprintf(&sb, "  Status: %s\n", state.Status)
-	fmt.Fprintf(&sb, "  ParentID: %s\n", state.ParentID)
-	fmt.Fprintf(&sb, "  CreatedAt: %v\n", state.CreatedAt)
-	fmt.Fprintf(&sb, "  LastActive: %v\n", state.LastActive)
+	fmt.Fprintf(&sb, "  Title: %s\n", state.GetTitle())
+	fmt.Fprintf(&sb, "  Type: %s\n", state.GetType())
+	fmt.Fprintf(&sb, "  Status: %s\n", state.GetStatus())
+	fmt.Fprintf(&sb, "  ParentID: %s\n", state.GetParentID())
+	fmt.Fprintf(&sb, "  CreatedAt: %v\n", state.GetCreatedAt())
+	fmt.Fprintf(&sb, "  LastActive: %v\n", state.GetLastActive())
 	fmt.Fprintf(&sb, "  Model: %s\n", agent.GetModel())
 	fmt.Fprintf(&sb, "  MessageCount: %d\n", len(msgs))
 	if len(msgs) > 0 {

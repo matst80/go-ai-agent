@@ -22,12 +22,12 @@ type RegistryEvent struct {
 }
 
 type AgentDefinition struct {
-	spawnFunction func(ctx context.Context, content string) AgentSessionInterface
+	spawnFunction func(ctx context.Context, content string, state AgentState) AgentSessionInterface
 	Title         string `json:"title"`
 	Description   string `json:"description"`
 }
 
-func NewAgentDefinition(title, description string, spawnFn func(ctx context.Context, content string) AgentSessionInterface) AgentDefinition {
+func NewAgentDefinition(title, description string, spawnFn func(ctx context.Context, content string, state AgentState) AgentSessionInterface) AgentDefinition {
 	return AgentDefinition{
 		Title:         title,
 		Description:   description,
@@ -117,7 +117,7 @@ func (c *AgentRegistryConfig) Build() *AgentRegistry {
 		registry.RegisterAgent(config.Name, AgentDefinition{
 			Title:       config.Title,
 			Description: config.Description,
-			spawnFunction: func(ctx context.Context, content string) AgentSessionInterface {
+			spawnFunction: func(ctx context.Context, content string, state AgentState) AgentSessionInterface {
 				client := c.Clients[config.Client]
 				// Note: If client is nil, session will be created with nil client.
 				// ChatStreamed will fail later, which is acceptable if misconfigured.
@@ -132,7 +132,7 @@ func (c *AgentRegistryConfig) Build() *AgentRegistry {
 
 				req.WithTools(config.tools)
 
-				session := NewAgentSession(ctx, client, req)
+				session := NewAgentSession(ctx, client, req, state)
 
 				// Apply OnSpawn hook from config
 				if c.OnSpawn != nil {
@@ -144,6 +144,16 @@ func (c *AgentRegistryConfig) Build() *AgentRegistry {
 		})
 	}
 	return registry
+}
+
+func (r *AgentRegistry) GetAgentTypes() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	types := make([]string, 0, len(r.AgentTypes))
+	for t := range r.AgentTypes {
+		types = append(types, t)
+	}
+	return types
 }
 
 func (r *AgentRegistry) AddEventListener(listener func(event RegistryEvent)) {
@@ -193,7 +203,7 @@ func (r *AgentRegistry) GetAgent(instanceID string) (AgentSessionInterface, bool
 	return agent, ok
 }
 
-func (r *AgentRegistry) SpawnAgent(ctx context.Context, typeName string, instanceID string, content string, parentID string) (AgentSessionInterface, error) {
+func (r *AgentRegistry) SpawnAgent(ctx context.Context, typeName string, instanceID string, content string, state AgentState) (AgentSessionInterface, error) {
 	r.mu.Lock()
 	agentDef, ok := r.AgentTypes[typeName]
 	if !ok {
@@ -206,19 +216,24 @@ func (r *AgentRegistry) SpawnAgent(ctx context.Context, typeName string, instanc
 		return nil, fmt.Errorf("agent instance %s already exists", instanceID)
 	}
 
-	session := agentDef.spawnFunction(ctx, content)
-	session.SetState(func(s *AgentState) {
-		s.Title = agentDef.Title
-		s.Type = typeName
-		s.ParentID = parentID
-	})
+	parentId, ok := ctx.Value("agentID").(string)
+	if ok {
+		ctx = context.WithValue(ctx, "parentAgentID", parentId)
+		state.SetParentID(parentId)
+	}
+
+	ctx = context.WithValue(ctx, "agentID", instanceID)
+	state.SetTitle(agentDef.Title)
+	state.SetType(typeName)
+
+	session := agentDef.spawnFunction(ctx, content, state)
+
 	r.agents[instanceID] = session
 	r.mu.Unlock()
 
 	r.emitEvent(RegistryEvent{
-		Type:          EventAgentSpawned,
-		AgentID:       instanceID,
-		ParentAgentID: parentID,
+		Type:    EventAgentSpawned,
+		AgentID: instanceID,
 	})
 
 	return session, nil

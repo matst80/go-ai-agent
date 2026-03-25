@@ -10,13 +10,13 @@ import (
 type testHooks struct {
 	DefaultSessionHooks
 	onChatRequestCalled    bool
-	onThinkingCalled      bool
-	onContentCalled       bool
+	onThinkingCalled       bool
+	onContentCalled        bool
 	onBeforeToolCallCalled bool
 	onAfterToolCallCalled  bool
-	onBlockCalled         bool
-	onDoneCalled          bool
-	onErrorCalled         bool
+	onBlockCalled          bool
+	onDoneCalled           bool
+	onErrorCalled          bool
 
 	thinkingDeltas []string
 	contentDeltas  []string
@@ -100,7 +100,7 @@ func TestAgentSession_Hooks(t *testing.T) {
 	}
 
 	hooks := &testHooks{}
-	session := NewAgentSession(ctx, mockClient, req, WithHooks(hooks))
+	session := NewAgentSession(ctx, mockClient, req, NewDefaultAgentState(), WithHooks(hooks))
 	defer session.Stop()
 
 	err := session.SendUserMessage(ctx, "Hi")
@@ -169,7 +169,7 @@ func TestAgentSession_Hooks_Error(t *testing.T) {
 	}
 
 	hooks := &testHooks{}
-	session := NewAgentSession(ctx, mockClient, req, WithHooks(hooks))
+	session := NewAgentSession(ctx, mockClient, req, NewDefaultAgentState(), WithHooks(hooks))
 	defer session.Stop()
 
 	_ = session.SendUserMessage(ctx, "Hi")

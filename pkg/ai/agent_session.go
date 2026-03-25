@@ -24,21 +24,100 @@ type AgentSessionInterface interface {
 	GetModel() string
 	Stop()
 	GetState() AgentState
-	SetState(update func(*AgentState))
+	SetState(update func(AgentState))
 	SetTools(tools []Tool)
 	SetClient(client ChatClientInterface)
 	SetHooks(hooks ...SessionHooks)
+	GetContext() context.Context
 }
 
+type AgentStatus string
+
+const (
+	AgentStatusIdle    AgentStatus = "idle"
+	AgentStatusRunning AgentStatus = "running"
+	AgentStatusStopped AgentStatus = "stopped"
+)
+
 // AgentState holds the current status and metadata of an agent session
-type AgentState struct {
-	Status        string
-	CurrentOutput string
-	ParentID      string
-	Title         string
-	Type          string
-	CreatedAt     time.Time
-	LastActive    time.Time
+type AgentState interface {
+	SetStatus(AgentStatus)
+	GetStatus() AgentStatus
+	SetParentID(string)
+	GetParentID() string
+	SetTitle(string)
+	GetTitle() string
+	SetType(string)
+	GetType() string
+	SetCreatedAt(time.Time)
+	GetCreatedAt() time.Time
+	SetLastActive(time.Time)
+	GetLastActive() time.Time
+}
+
+type DefaultAgentState struct {
+	status     AgentStatus
+	parentID   string
+	title      string
+	agentType  string
+	createdAt  time.Time
+	lastActive time.Time
+}
+
+func (s *DefaultAgentState) SetStatus(status AgentStatus) {
+	s.status = status
+}
+
+func (s *DefaultAgentState) GetStatus() AgentStatus {
+	return s.status
+}
+
+func (s *DefaultAgentState) SetParentID(parentID string) {
+	s.parentID = parentID
+}
+
+func (s *DefaultAgentState) GetParentID() string {
+	return s.parentID
+}
+
+func (s *DefaultAgentState) SetTitle(title string) {
+	s.title = title
+}
+
+func (s *DefaultAgentState) GetTitle() string {
+	return s.title
+}
+
+func (s *DefaultAgentState) SetType(agentType string) {
+	s.agentType = agentType
+}
+
+func (s *DefaultAgentState) GetType() string {
+	return s.agentType
+}
+
+func (s *DefaultAgentState) SetCreatedAt(createdAt time.Time) {
+	s.createdAt = createdAt
+}
+
+func (s *DefaultAgentState) GetCreatedAt() time.Time {
+	return s.createdAt
+}
+
+func (s *DefaultAgentState) SetLastActive(lastActive time.Time) {
+	s.lastActive = lastActive
+}
+
+func (s *DefaultAgentState) GetLastActive() time.Time {
+	return s.lastActive
+}
+
+func NewDefaultAgentState() *DefaultAgentState {
+	return &DefaultAgentState{
+		status:     AgentStatusIdle,
+		createdAt:  time.Now(),
+		lastActive: time.Now(),
+	}
 }
 
 // AgentSession manages a continuous chat session, tracking the underlying ChatRequest
@@ -72,7 +151,7 @@ type TruncationConfig struct {
 
 // NewAgentSession creates a new AgentSession with the given client and base request.
 // Use options like WithTransformer or WithAccumulator to specify the output type.
-func NewAgentSession(ctx context.Context, client ChatClientInterface, req *ChatRequest, opts ...AgentSessionOption) *AgentSession {
+func NewAgentSession(ctx context.Context, client ChatClientInterface, req *ChatRequest, state AgentState, opts ...AgentSessionOption) *AgentSession {
 	ctx, cancel := context.WithCancel(ctx)
 	session := &AgentSession{
 		client: client,
@@ -82,11 +161,7 @@ func NewAgentSession(ctx context.Context, client ChatClientInterface, req *ChatR
 		globalChan: make(chan AccumulatedResponse, 100),
 		ctx:        ctx,
 		cancel:     cancel,
-		state: AgentState{
-			Status:     "idle",
-			CreatedAt:  time.Now(),
-			LastActive: time.Now(),
-		},
+		state:      state,
 	}
 	for _, opt := range opts {
 		opt(session)
@@ -153,6 +228,10 @@ func (a *AgentSession) Stop() {
 	})
 }
 
+func (a *AgentSession) GetContext() context.Context {
+	return a.ctx
+}
+
 // SendUserMessage appends a user message to the request and triggers a streaming chat.
 // It serializes request mutation and stream startup under the session mutex.
 func (a *AgentSession) SendUserMessage(ctx context.Context, msg string) error {
@@ -216,10 +295,10 @@ func (a *AgentSession) GetState() AgentState {
 	return a.state
 }
 
-func (a *AgentSession) SetState(update func(*AgentState)) {
+func (a *AgentSession) SetState(update func(AgentState)) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	update(&a.state)
+	update(a.state)
 }
 
 // SetTools updates the tools available to the AI for subsequent requests.
@@ -266,14 +345,10 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 
 			// We need a separate goroutine because ChatStreamed is blocking
 			go func() {
-				a.SetState(func(as *AgentState) {
-					as.Status = "waiting"
-					as.LastActive = time.Now()
-				})
-				defer a.SetState(func(as *AgentState) {
-					as.Status = "idle"
-					as.LastActive = time.Now()
-				})
+				a.state.SetStatus("waiting")
+				a.state.SetLastActive(time.Now())
+				defer a.state.SetStatus("idle")
+				defer a.state.SetLastActive(time.Now())
 				err := a.client.ChatStreamed(ctx, *a.rec, tempCh)
 				if err != nil {
 					lastErr = err

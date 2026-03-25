@@ -33,11 +33,11 @@ func main() {
 	registry.RegisterAgent("ollama", ai.NewAgentDefinition(
 		"Ollama Agent",
 		"Local LLM powered by Ollama (llama3)",
-		func(ctx context.Context, content string) ai.AgentSessionInterface {
+		func(ctx context.Context, content string, state ai.AgentState) ai.AgentSessionInterface {
 			client := ollama.NewOllamaClient("http://localhost:11434").WithDefaultModel("qwen3.5:4b")
 			req := ai.NewDefaultChatRequest()
 			req.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: content}}
-			return ai.NewAgentSession(ctx, client, req)
+			return ai.NewAgentSession(ctx, client, req, state)
 		},
 	))
 
@@ -45,7 +45,7 @@ func main() {
 	registry.RegisterAgent("xai", ai.NewAgentDefinition(
 		"xAI Agent",
 		"Cloud LLM powered by xAI (grok-beta)",
-		func(ctx context.Context, content string) ai.AgentSessionInterface {
+		func(ctx context.Context, content string, state ai.AgentState) ai.AgentSessionInterface {
 			client := xai.NewXAIClient("https://api.x.ai/v1", os.Getenv("XAI_API_KEY")).WithDefaultModel("grok-beta")
 			// If a global log path is configured, make sure the client also has its local log path set.
 			if lp := os.Getenv("AI_LOG_PATH"); lp != "" {
@@ -53,13 +53,13 @@ func main() {
 			}
 			req := ai.NewDefaultChatRequest()
 			req.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: content}}
-			return ai.NewAgentSession(ctx, client, req)
+			return ai.NewAgentSession(ctx, client, req, state)
 		},
 	))
 	registry.RegisterAgent("openrouter", ai.NewAgentDefinition(
 		"OpenRouter Agent",
 		"Cloud LLM powered by OpenRouter (hunter-alpha)",
-		func(ctx context.Context, content string) ai.AgentSessionInterface {
+		func(ctx context.Context, content string, state ai.AgentState) ai.AgentSessionInterface {
 			client := openrouter.NewOpenRouterClient("https://openrouter.ai", os.Getenv("OPENROUTER_API_KEY")).WithDefaultModel("openrouter/hunter-alpha")
 			// Ensure the OpenRouter client also gets its logfile set if provided.
 			if lp := os.Getenv("AI_LOG_PATH"); lp != "" {
@@ -67,13 +67,13 @@ func main() {
 			}
 			req := ai.NewDefaultChatRequest()
 			req.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: content}}
-			return ai.NewAgentSession(ctx, client, req)
+			return ai.NewAgentSession(ctx, client, req, state)
 		},
 	))
 	registry.RegisterAgent("github", ai.NewAgentDefinition(
 		"GitHub Agent",
 		"Cloud LLM powered by GitHub Models",
-		func(ctx context.Context, content string) ai.AgentSessionInterface {
+		func(ctx context.Context, content string, state ai.AgentState) ai.AgentSessionInterface {
 			model := os.Getenv("GITHUB_MODEL")
 			if model == "" {
 				model = "gpt-4o"
@@ -84,12 +84,14 @@ func main() {
 			}
 			req := ai.NewDefaultChatRequest()
 			req.Messages = []ai.Message{{Role: ai.MessageRoleSystem, Content: content}}
-			return ai.NewAgentSession(ctx, client, req)
+			return ai.NewAgentSession(ctx, client, req, state)
 		},
 	))
 
 	// 4. Create RegistryToolHandler to expose registry operations as tools
-	toolHandler := ai.NewRegistryToolHandler(registry)
+	toolHandler := ai.NewRegistryToolHandler(registry, func(ctx context.Context, content string) ai.AgentState {
+		return ai.NewDefaultAgentState()
+	})
 
 	masterToolRegistry := tools.NewRegistry()
 	masterToolRegistry.RegisterTools(toolHandler.GetToolDefinitions()...)
@@ -149,7 +151,7 @@ func main() {
 	})
 
 	executor := tools.NewToolExecutor(masterToolRegistry)
-	masterSession := ai.NewAgentSession(ctx, masterClient, masterReq,
+	masterSession := ai.NewAgentSession(ctx, masterClient, masterReq, ai.NewDefaultAgentState(),
 		ai.WithRepoRoot(repoRoot),
 		ai.WithOperationHandler(&ai.DefaultOperationHandler{}),
 		ai.WithTruncation(summarizer),
