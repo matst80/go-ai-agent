@@ -14,17 +14,18 @@ type GeminiClient struct {
 
 // NewGeminiClient creates a new Gemini client
 func NewGeminiClient(apiKey string) *GeminiClient {
-    // A context is required for genai.NewClient
+	// A context is required for genai.NewClient
 	ctx := context.Background()
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-        APIKey: apiKey,
-    })
-    if err != nil {
-        // Logically, we should return an error, but the interface dictates
-        // returning *GeminiClient. The SDK panic/fails on missing API key only upon use,
-        // or we can handle it.
-        panic(err)
-    }
+		APIKey:  apiKey,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		// Logically, we should return an error, but the interface dictates
+		// returning *GeminiClient. The SDK panic/fails on missing API key only upon use,
+		// or we can handle it.
+		panic(err)
+	}
 
 	return &GeminiClient{
 		client: client,
@@ -34,9 +35,9 @@ func NewGeminiClient(apiKey string) *GeminiClient {
 // Chat handles a non-streaming request to Gemini and returns the full ChatResponse
 func (c *GeminiClient) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
 	geminiReq, config, err := ToGeminiRequest(req)
-    if err != nil {
-        return nil, err
-    }
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := c.client.Models.GenerateContent(ctx, req.Model, geminiReq, config)
 	if err != nil {
@@ -51,18 +52,18 @@ func (c *GeminiClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch 
 	defer close(ch)
 
 	geminiReq, config, err := ToGeminiRequest(req)
-    if err != nil {
-        return err
-    }
+	if err != nil {
+		return err
+	}
 
 	stream := c.client.Models.GenerateContentStream(ctx, req.Model, geminiReq, config)
 
-    for chunk, err := range stream {
-        if err != nil {
-            return err
-        }
-        ch <- ToChatResponse(chunk)
-    }
+	for chunk, err := range stream {
+		if err != nil {
+			return err
+		}
+		ch <- ToChatResponse(chunk)
+	}
 
 	return nil
 }

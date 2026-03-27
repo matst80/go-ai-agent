@@ -6,6 +6,16 @@ import (
 )
 
 func generateJSONSchema(t reflect.Type) map[string]interface{} {
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	if t.Kind() != reflect.Struct {
+		return map[string]interface{}{
+			"type": goTypeToJSONType(t),
+		}
+	}
+
 	schema := map[string]interface{}{
 		"type":       "object",
 		"properties": make(map[string]interface{}),
@@ -41,9 +51,7 @@ func generateJSONSchema(t reflect.Type) map[string]interface{} {
 			required = append(required, name)
 		}
 
-		property := map[string]interface{}{
-			"type": goTypeToJSONType(field.Type),
-		}
+		property := buildSchemaForType(field.Type)
 		if description != "" {
 			property["description"] = description
 		}
@@ -56,6 +64,43 @@ func generateJSONSchema(t reflect.Type) map[string]interface{} {
 	}
 
 	return schema
+}
+
+func buildSchemaForType(t reflect.Type) map[string]interface{} {
+	if t.Kind() == reflect.Ptr {
+		return buildSchemaForType(t.Elem())
+	}
+
+	jsonType := goTypeToJSONType(t)
+	res := map[string]interface{}{
+		"type": jsonType,
+	}
+
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array:
+		res["items"] = buildSchemaForType(t.Elem())
+	case reflect.Struct:
+		// To avoid infinite recursion, we only generate basic object schema for nested structs
+		// unless we want to support full deep generation.
+		// For Gemini tools, shallow structs are usually enough, 
+		// but let's at least ensure we provide properties if needed or use string as fallback.
+		// For now, let's keep it simple but functional for slices of primitives.
+		if t.NumField() > 0 {
+			props := make(map[string]interface{})
+			for i := 0; i < t.NumField(); i++ {
+				f := t.Field(i)
+				jt := f.Tag.Get("json")
+				if jt == "-" || jt == "" {
+					continue
+				}
+				fn := strings.Split(jt, ",")[0]
+				props[fn] = buildSchemaForType(f.Type)
+			}
+			res["properties"] = props
+		}
+	}
+
+	return res
 }
 
 func goTypeToJSONType(t reflect.Type) string {

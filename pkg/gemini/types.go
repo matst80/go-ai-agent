@@ -75,7 +75,8 @@ func ToGeminiRequest(req ai.ChatRequest) ([]*genai.Content, *genai.GenerateConte
 
             // Convert json schema in function parameters to genai.Schema
             var paramsSchema *genai.Schema
-            b, err := json.Marshal(t.Function.Parameters)
+            sanitizedParams := sanitizeSchema(t.Function.Parameters)
+            b, err := json.Marshal(sanitizedParams)
             if err == nil {
                 json.Unmarshal(b, &paramsSchema)
             }
@@ -98,6 +99,59 @@ func ToGeminiRequest(req ai.ChatRequest) ([]*genai.Content, *genai.GenerateConte
 	}
 
 	return contents, config, nil
+}
+
+// sanitizeSchema recursively ensures that all array types in the JSON schema have an "items" field,
+// which is required by the Gemini API.
+func sanitizeSchema(schema any) any {
+	if m, ok := schema.(map[string]any); ok {
+		// Fix array type
+		if t, ok := m["type"].(string); ok && t == "array" {
+			if _, hasItems := m["items"]; !hasItems {
+				m["items"] = map[string]any{"type": "string"}
+			}
+		}
+
+		// Recurse into properties
+		if props, ok := m["properties"].(map[string]any); ok {
+			for k, v := range props {
+				props[k] = sanitizeSchema(v)
+			}
+		}
+
+		// Recurse into items (if it's an array of objects/arrays)
+		if items, ok := m["items"].(map[string]any); ok {
+			m["items"] = sanitizeSchema(items)
+		}
+
+		return m
+	}
+
+	// For standard ai.Tool, parameters might already be from ai.generateJSONSchema (map[string]interface{})
+	if m, ok := schema.(map[string]interface{}); ok {
+		// Fix array type
+		if t, ok := m["type"].(string); ok && t == "array" {
+			if _, hasItems := m["items"]; !hasItems {
+				m["items"] = map[string]interface{}{"type": "string"}
+			}
+		}
+
+		// Recurse into properties
+		if props, ok := m["properties"].(map[string]interface{}); ok {
+			for k, v := range props {
+				props[k] = sanitizeSchema(v)
+			}
+		}
+
+		// Recurse into items
+		if items, ok := m["items"].(map[string]interface{}); ok {
+			m["items"] = sanitizeSchema(items)
+		}
+
+		return m
+	}
+
+	return schema
 }
 
 // Helper to convert genai.GenerateContentResponse to ai.ChatResponse
