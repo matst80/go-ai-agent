@@ -2,132 +2,48 @@ package gemini
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/matst80/go-ai-agent/pkg/ai"
+	"google.golang.org/genai"
 )
 
-// GeminiRequest represents the request body for Gemini API
-type GeminiRequest struct {
-	Contents          []GeminiContent   `json:"contents"`
-	SystemInstruction *GeminiContent    `json:"systemInstruction,omitempty"`
-	GenerationConfig  *GenerationConfig `json:"generationConfig,omitempty"`
-	Tools             []GeminiTool      `json:"tools,omitempty"`
-}
-
-type GeminiContent struct {
-	Role  string       `json:"role,omitempty"`
-	Parts []GeminiPart `json:"parts"`
-}
-
-type GeminiPart struct {
-	Text             string                  `json:"text,omitempty"`
-	InlineData       *InlineData             `json:"inlineData,omitempty"`
-	FunctionCall     *GeminiFunctionCall     `json:"functionCall,omitempty"`
-	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"`
-	ThoughtSignature string                  `json:"thoughtSignature,omitempty"`
-}
-
-type InlineData struct {
-	MimeType string `json:"mime_type"`
-	Data     string `json:"data"`
-}
-
-type GeminiFunctionCall struct {
-	Id   string         `json:"id"`
-	Name string         `json:"name"`
-	Args map[string]any `json:"args"`
-}
-
-type GeminiFunctionResponse struct {
-	Name     string         `json:"name"`
-	Response map[string]any `json:"response"`
-}
-
-type GenerationConfig struct {
-	Temperature      *float64 `json:"temperature,omitempty"`
-	TopP             *float64 `json:"topP,omitempty"`
-	TopK             *int     `json:"topK,omitempty"`
-	MaxOutputTokens  *int     `json:"maxOutputTokens,omitempty"`
-	ResponseMimeType string   `json:"responseMimeType,omitempty"`
-	StopSequences    []string `json:"stopSequences,omitempty"`
-}
-
-type GeminiTool struct {
-	FunctionDeclarations []ai.Function `json:"functionDeclarations,omitempty"`
-}
-
-// GeminiResponse represents the response from Gemini API
-type GeminiResponse struct {
-	Candidates     []GeminiCandidate `json:"candidates"`
-	UsageMetadata  *UsageMetadata    `json:"usageMetadata,omitempty"`
-	PromptFeedback *PromptFeedback   `json:"promptFeedback,omitempty"`
-}
-
-type GeminiCandidate struct {
-	Content       GeminiContent        `json:"content"`
-	FinishReason  string               `json:"finishReason,omitempty"`
-	Index         int                  `json:"index"`
-	SafetyRatings []GeminiSafetyRating `json:"safetyRatings,omitempty"`
-}
-
-/*
-
-{"candidates": [
-{"content": {"parts": [{"functionCall": {"name": "run","args": {"command": "df -h /"},"id": "8qww9c6v"},"thoughtSignature": "EjQKMgG+Pvb7a+BCB+Y31VaoyKyrqwNLWNCEjl8bzr3GjnEO+CN/0LyOo3wgix+8iI0P9G7P"}],"role": "model"},"index": 0}],"usageMetadata": {"promptTokenCount": 57,"candidatesTokenCount": 17,"totalTokenCount": 74,"promptTokensDetails": [{"modality": "TEXT","tokenCount": 57}]},"modelVersion": "gemini-3.1-flash-lite-preview","responseId": "PACzadi9H6aQ_uMPhruWuA0"}
-
-*/
-
-type GeminiSafetyRating struct {
-	Category    string `json:"category"`
-	Probability string `json:"probability"`
-}
-
-type UsageMetadata struct {
-	PromptTokenCount     int `json:"promptTokenCount"`
-	CandidatesTokenCount int `json:"candidatesTokenCount"`
-	TotalTokenCount      int `json:"totalTokenCount"`
-}
-
-type PromptFeedback struct {
-	SafetyRatings []GeminiSafetyRating `json:"safetyRatings,omitempty"`
-}
-
-// Helper to convert ai.ChatRequest to GeminiRequest
-func ToGeminiRequest(req ai.ChatRequest) GeminiRequest {
-	contents := make([]GeminiContent, 0)
-	var systemInstr *GeminiContent
+// Helper to convert ai.ChatRequest to []*genai.Content and *genai.GenerateContentConfig
+func ToGeminiRequest(req ai.ChatRequest) ([]*genai.Content, *genai.GenerateContentConfig, error) {
+	contents := make([]*genai.Content, 0)
+	var systemInstr *genai.Content
 
 	for _, msg := range req.Messages {
 		if msg.Role == ai.MessageRoleSystem {
-			systemInstr = &GeminiContent{
-				Parts: []GeminiPart{{Text: msg.Content}},
+			systemInstr = &genai.Content{
+				Parts: []*genai.Part{{Text: msg.Content}},
 			}
 			continue
 		}
 
-		role := string(msg.Role)
-		if role == string(ai.MessageRoleAssistant) {
+		role := "user"
+		if msg.Role == ai.MessageRoleAssistant {
 			role = "model"
-		} else if role == string(ai.MessageRoleTool) {
-			role = "user"
 		}
 
-		parts := make([]GeminiPart, 0)
-		if msg.Content != "" {
-			parts = append(parts, GeminiPart{Text: msg.Content})
+		parts := make([]*genai.Part, 0)
+		if msg.Content != "" && msg.Role != ai.MessageRoleTool {
+			parts = append(parts, &genai.Part{Text: msg.Content})
 		}
 
 		for _, tc := range msg.ToolCalls {
 			var args map[string]any
 			json.Unmarshal(tc.Function.Arguments, &args)
-			parts = append(parts, GeminiPart{
-				FunctionCall: &GeminiFunctionCall{
-					Id:   tc.ID,
+			part := &genai.Part{
+				FunctionCall: &genai.FunctionCall{
 					Name: tc.Function.Name,
 					Args: args,
 				},
-				ThoughtSignature: tc.ThoughtSignature,
-			})
+			}
+			if tc.ThoughtSignature != "" {
+				part.ThoughtSignature = []byte(tc.ThoughtSignature)
+			}
+			parts = append(parts, part)
 		}
 
 		if msg.Role == ai.MessageRoleTool {
@@ -135,46 +51,133 @@ func ToGeminiRequest(req ai.ChatRequest) GeminiRequest {
 			if err := json.Unmarshal([]byte(msg.Content), &response); err != nil {
 				response = map[string]any{"result": msg.Content}
 			}
-			parts = append(parts, GeminiPart{
-				FunctionResponse: &GeminiFunctionResponse{
+			// Note: We try to use the ToolCallID as the name if we don't have the function name,
+			// though Gemini prefers the function name. If the previous message was a model call,
+			// we could try to look it up, but for now we'll stick to ID.
+			parts = append(parts, &genai.Part{
+				FunctionResponse: &genai.FunctionResponse{
 					Name:     msg.ToolCallID,
 					Response: response,
 				},
 			})
 		}
 
-		contents = append(contents, GeminiContent{
-			Role:  role,
-			Parts: parts,
-		})
-	}
-
-	var tools []GeminiTool
-	if len(req.Tools) > 0 {
-		funcs := make([]ai.Function, 0, len(req.Tools))
-		for _, t := range req.Tools {
-			funcs = append(funcs, t.Function)
+		// Merge with previous message if role is the same
+		if len(contents) > 0 && contents[len(contents)-1].Role == role {
+			contents[len(contents)-1].Parts = append(contents[len(contents)-1].Parts, parts...)
+		} else if len(parts) > 0 {
+			contents = append(contents, &genai.Content{
+				Role:  role,
+				Parts: parts,
+			})
 		}
-		tools = append(tools, GeminiTool{FunctionDeclarations: funcs})
 	}
 
-	config := &GenerationConfig{}
+	config := &genai.GenerateContentConfig{
+		SystemInstruction: systemInstr,
+	}
+
+	if len(req.Tools) > 0 {
+		funcs := make([]*genai.FunctionDeclaration, 0)
+		var googleSearch *genai.GoogleSearchRetrieval
+
+		for _, t := range req.Tools {
+			if t.Function.Name == "google_search_retrieval" || t.Function.Name == "google_search" {
+				googleSearch = &genai.GoogleSearchRetrieval{}
+				continue
+			}
+
+			// Convert json schema in function parameters to genai.Schema
+			var paramsSchema *genai.Schema
+			sanitizedParams := sanitizeSchema(t.Function.Parameters)
+			b, err := json.Marshal(sanitizedParams)
+			if err == nil {
+				json.Unmarshal(b, &paramsSchema)
+			}
+
+			funcs = append(funcs, &genai.FunctionDeclaration{
+				Name:        t.Function.Name,
+				Description: t.Function.Description,
+				Parameters:  paramsSchema,
+			})
+		}
+
+		if len(funcs) > 0 {
+			config.Tools = append(config.Tools, &genai.Tool{
+				FunctionDeclarations: funcs,
+			})
+		}
+		if googleSearch != nil {
+			config.Tools = append(config.Tools, &genai.Tool{
+				GoogleSearchRetrieval: googleSearch,
+			})
+		}
+	}
+
 	if req.Format != nil {
 		if *req.Format == ai.ResponseFormatJson {
-			config.ResponseMimeType = "application/json"
+			config.ResponseMIMEType = "application/json"
 		}
 	}
 
-	return GeminiRequest{
-		Contents:          contents,
-		SystemInstruction: systemInstr,
-		Tools:             tools,
-		GenerationConfig:  config,
-	}
+	return contents, config, nil
 }
 
-// Helper to convert GeminiResponse to ai.ChatResponse
-func (gr *GeminiResponse) ToChatResponse() *ai.ChatResponse {
+// sanitizeSchema recursively ensures that all array types in the JSON schema have an "items" field,
+// which is required by the Gemini API.
+func sanitizeSchema(schema any) any {
+	if m, ok := schema.(map[string]any); ok {
+		// Fix array type
+		if t, ok := m["type"].(string); ok && t == "array" {
+			if _, hasItems := m["items"]; !hasItems {
+				m["items"] = map[string]any{"type": "string"}
+			}
+		}
+
+		// Recurse into properties
+		if props, ok := m["properties"].(map[string]any); ok {
+			for k, v := range props {
+				props[k] = sanitizeSchema(v)
+			}
+		}
+
+		// Recurse into items (if it's an array of objects/arrays)
+		if items, ok := m["items"].(map[string]any); ok {
+			m["items"] = sanitizeSchema(items)
+		}
+
+		return m
+	}
+
+	// For standard ai.Tool, parameters might already be from ai.generateJSONSchema (map[string]interface{})
+	if m, ok := schema.(map[string]interface{}); ok {
+		// Fix array type
+		if t, ok := m["type"].(string); ok && t == "array" {
+			if _, hasItems := m["items"]; !hasItems {
+				m["items"] = map[string]interface{}{"type": "string"}
+			}
+		}
+
+		// Recurse into properties
+		if props, ok := m["properties"].(map[string]interface{}); ok {
+			for k, v := range props {
+				props[k] = sanitizeSchema(v)
+			}
+		}
+
+		// Recurse into items
+		if items, ok := m["items"].(map[string]interface{}); ok {
+			m["items"] = sanitizeSchema(items)
+		}
+
+		return m
+	}
+
+	return schema
+}
+
+// Helper to convert genai.GenerateContentResponse to ai.ChatResponse
+func ToChatResponse(gr *genai.GenerateContentResponse) *ai.ChatResponse {
 	if gr == nil || len(gr.Candidates) == 0 {
 		return &ai.ChatResponse{
 			BaseResponse: &ai.BaseResponse{
@@ -187,31 +190,47 @@ func (gr *GeminiResponse) ToChatResponse() *ai.ChatResponse {
 	content := ""
 	var toolCalls []ai.ToolCall
 
-	for _, part := range cand.Content.Parts {
-		if part.Text != "" {
-			content += part.Text
+	if cand.Content != nil {
+		for _, part := range cand.Content.Parts {
+			if part.Text != "" {
+				content += part.Text
+			}
+			if part.FunctionCall != nil {
+				args, _ := json.Marshal(part.FunctionCall.Args)
+				toolCalls = append(toolCalls, ai.ToolCall{
+					ID: part.FunctionCall.ID,
+					Function: ai.FunctionCall{
+						Name:      part.FunctionCall.Name,
+						Arguments: args,
+					},
+					ThoughtSignature: string(part.ThoughtSignature),
+				})
+			}
 		}
-		if part.FunctionCall != nil {
-			args, _ := json.Marshal(part.FunctionCall.Args)
-			toolCalls = append(toolCalls, ai.ToolCall{
-				ID: part.FunctionCall.Id,
-				Function: ai.FunctionCall{
-					Name:      part.FunctionCall.Name,
-					Arguments: args,
-				},
-				ThoughtSignature: part.ThoughtSignature,
-			})
+	}
+
+	if cand.GroundingMetadata != nil {
+		content += "\n\nSources:\n"
+		for _, chunk := range cand.GroundingMetadata.GroundingChunks {
+			if chunk.Web != nil {
+				content += fmt.Sprintf("- [%s](%s)\n", chunk.Web.Title, chunk.Web.URI)
+			}
 		}
 	}
 
 	role := ai.MessageRoleAssistant
-	if cand.Content.Role == "user" {
-		role = ai.MessageRoleUser
+	if cand.Content != nil {
+		if cand.Content.Role == "user" {
+			role = ai.MessageRoleUser
+		}
 	}
+
+	doneReason := string(cand.FinishReason)
 
 	return &ai.ChatResponse{
 		BaseResponse: &ai.BaseResponse{
-			Done: cand.FinishReason != "" && cand.FinishReason != "NONE",
+			Done:       doneReason != "" && doneReason != "FINISH_REASON_UNSPECIFIED",
+			DoneReason: doneReason,
 		},
 		Message: ai.Message{
 			Role:      role,
