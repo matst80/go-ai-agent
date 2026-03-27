@@ -65,6 +65,7 @@ func (c *GitHubClient) getOrCreateSession(ctx context.Context, sessionID string,
 
 	sess, err := c.client.CreateSession(ctx, &copilot.SessionConfig{
 		Model:               model,
+		Streaming:           true,
 		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
 	})
 	if err != nil {
@@ -139,23 +140,22 @@ func (c *GitHubClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch 
 		latestMessage = req.Messages[len(req.Messages)-1].Content
 	}
 
-	done := make(chan error, 1) // Buffer of 1 prevents deadlock if both error and done happen
+	var currentMsgID string
+	var msgIDMu sync.RWMutex
 
-	msgID, err := sess.Send(ctx, copilot.MessageOptions{
-		Prompt: latestMessage,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to send message: %w", err)
-	}
-
-	// Make sure we stop sending to ch after we unsubscribe and exit
+	done := make(chan error, 1)
 	chClosed := false
 	var chMu sync.Mutex
 
-	// Register event handler AFTER sending so msgID is known and we don't have a race condition
+	// Register event handler BEFORE sending so we don't miss early events
 	unsubscribe := sess.On(func(event copilot.SessionEvent) {
-		// Filter events: only process events for our interaction.
-		if event.Data.InteractionID != nil && *event.Data.InteractionID != msgID {
+		msgIDMu.RLock()
+		mid := currentMsgID
+		msgIDMu.RUnlock()
+
+		// Filter events: if we have an interaction ID and we know our msgID, they must match.
+		// If mid is empty, we allow it through (this handles events that arrive before Send returns).
+		if event.Data.InteractionID != nil && mid != "" && *event.Data.InteractionID != mid {
 			return
 		}
 
@@ -166,7 +166,7 @@ func (c *GitHubClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch 
 		}
 
 		switch event.Type {
-		case copilot.SessionEventType("assistant.message.chunk"):
+		case copilot.SessionEventTypeAssistantMessageDelta:
 			if event.Data.DeltaContent != nil {
 				ch <- &ai.ChatResponse{
 					BaseResponse: &ai.BaseResponse{
@@ -178,7 +178,7 @@ func (c *GitHubClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch 
 					},
 				}
 			}
-		case copilot.SessionEventType("assistant.error"):
+		case copilot.SessionEventTypeSessionError:
 			var errMsg string
 			if event.Data.ErrorReason != nil {
 				errMsg = *event.Data.ErrorReason
@@ -191,7 +191,7 @@ func (c *GitHubClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch 
 			case done <- fmt.Errorf("assistant error: %s", errMsg):
 			default:
 			}
-		case copilot.SessionEventType("assistant.message.done"):
+		case copilot.SessionEventTypeSessionIdle, copilot.SessionEventTypeAssistantTurnEnd:
 			select {
 			case done <- nil:
 			default:
@@ -205,6 +205,17 @@ func (c *GitHubClient) ChatStreamed(ctx context.Context, req ai.ChatRequest, ch 
 		chClosed = true
 		chMu.Unlock()
 	}()
+
+	msgID, err := sess.Send(ctx, copilot.MessageOptions{
+		Prompt: latestMessage,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to send message: %w", err)
+	}
+
+	msgIDMu.Lock()
+	currentMsgID = msgID
+	msgIDMu.Unlock()
 
 	select {
 	case <-ctx.Done():
