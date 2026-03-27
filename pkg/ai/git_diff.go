@@ -7,8 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/sergi/go-diff/diffmatchpatch"
 )
 
 // DiffOperation represents a single unified diff application request.
@@ -103,17 +106,147 @@ func (d *DefaultOperationHandler) HandleDiff(ctx context.Context, repoRoot strin
 	cmd.Dir = repoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return OperationResult{
-			Success: false,
-			Op:      "diff",
-			Message: fmt.Sprintf("git apply failed: %v: %s", err, string(out)),
-		}
+		fmt.Printf("[diff] git apply failed: %v: %s\n", err, string(out))
+		fmt.Printf("[diff] attempting fuzzy apply fallback for content:\n%s\n", op.Content)
+		return d.handleFuzzyApply(ctx, repoRoot, op.Content)
 	}
 
 	fmt.Printf("[diff] applied patch in %s\n", repoRoot)
 	return OperationResult{
 		Success: true,
 		Op:      "diff",
+	}
+}
+
+func (d *DefaultOperationHandler) handleFuzzyApply(ctx context.Context, repoRoot string, content string) OperationResult {
+	// Step 1: Split content into per-file chunks
+	// We look for patterns like:
+	// --- a/path
+	// +++ b/path
+	// ...hunk...
+	reFile := regexp.MustCompile(`(?m)^--- (?:a/)?([^\s\t\n]+)\n\+\+\+ (?:b/)?([^\s\t\n]+)`)
+	indices := reFile.FindAllStringIndex(content, -1)
+
+	if len(indices) == 0 {
+		return OperationResult{
+			Success: false,
+			Op:      "diff",
+			Message: "fuzzy apply: could not find any file headers with --- and +++",
+		}
+	}
+
+	type fileHunk struct {
+		path string
+		hunk string
+	}
+	var hunks []fileHunk
+
+	for i := 0; i < len(indices); i++ {
+		start := indices[i][0]
+		end := len(content)
+		if i+1 < len(indices) {
+			end = indices[i+1][0]
+		}
+
+		// Extract path from the --- header
+		submatches := reFile.FindStringSubmatch(content[start:indices[i][1]])
+		path := submatches[1]
+		if path == "/dev/null" {
+			path = submatches[2]
+		}
+		if path == "/dev/null" {
+			continue // Should not happen for both
+		}
+
+		hunks = append(hunks, fileHunk{
+			path: path,
+			hunk: content[start:end],
+		})
+	}
+
+	dmp := diffmatchpatch.New()
+	var successes []string
+	var failures []string
+
+	for _, fh := range hunks {
+		absPath := filepath.Join(repoRoot, fh.path)
+		original, err := os.ReadFile(absPath)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s (read error: %v)", fh.path, err))
+			continue
+		}
+
+		// Prepare patch text: go-diff expects @@ headers.
+		// If missing, we prepend a dummy one.
+		// Filter to keep only diff lines (@@, +, -, or space)
+		// and strip git headers that go-diff might not like.
+		lines := strings.Split(fh.hunk, "\n")
+		var filtered []string
+		hasHeader := false
+		for _, line := range lines {
+			if strings.HasPrefix(line, "@@") {
+				hasHeader = true
+				filtered = append(filtered, line)
+			} else if (strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++")) ||
+				(strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---")) ||
+				strings.HasPrefix(line, " ") {
+				filtered = append(filtered, line)
+			}
+		}
+
+		patchText := strings.Join(filtered, "\n")
+		if !hasHeader {
+			patchText = "@@ -0,0 +0,0 @@\n" + patchText
+		}
+
+		patches, err := dmp.PatchFromText(patchText)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s (parse error: %v)", fh.path, err))
+			continue
+		}
+
+		applied, results := dmp.PatchApply(patches, string(original))
+		hunkSuccess := true
+		for _, r := range results {
+			if !r {
+				hunkSuccess = false
+				break
+			}
+		}
+
+		if !hunkSuccess {
+			var hunkContext string
+			if len(patches) > 0 {
+				hunkContext = fmt.Sprintf(" (first hunk: %s)", patches[0].String())
+			}
+			failures = append(failures, fmt.Sprintf("%s (fuzzy match failed - tip: read the file first to ensure context is correct)%s", fh.path, hunkContext))
+			continue
+		}
+
+		if err := os.WriteFile(absPath, []byte(applied), 0644); err != nil {
+			failures = append(failures, fmt.Sprintf("%s (write error: %v)", fh.path, err))
+			continue
+		}
+		successes = append(successes, fh.path)
+	}
+
+	if len(failures) > 0 {
+		msg := "fuzzy apply failed: " + strings.Join(failures, "; ")
+		if len(successes) > 0 {
+			msg += " (but succeeded for: " + strings.Join(successes, ", ") + ")"
+		}
+		return OperationResult{
+			Success: false,
+			Op:      "diff",
+			Message: msg,
+		}
+	}
+
+	fmt.Printf("[diff] Applied fuzzy patch to: %s\n", strings.Join(successes, ", "))
+	return OperationResult{
+		Success: true,
+		Op:      "diff",
+		Message: "applied via fuzzy fallback: " + strings.Join(successes, ", "),
 	}
 }
 
@@ -204,6 +337,9 @@ func (p *DiffParser) ApplyBlock(ctx context.Context, block *StreamedBlock) error
 		return nil
 	}
 	if block.Type != "diff" {
+		return nil
+	}
+	if !block.Done {
 		return nil
 	}
 	return p.ApplyDiff(ctx, &DiffOperation{Content: block.Content})

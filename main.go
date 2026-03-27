@@ -124,12 +124,7 @@ func main() {
 		masterClient.WithLogFile(lp)
 	}
 
-	systemPrompt := "Output machine-actionable file changes using fenced `diff` blocks only. Do not emit surrounding prose when performing edits.\n" +
-		"Each fenced block must contain an exact unified git diff that can be applied directly with git apply.\n" +
-		"Example:\n" +
-		"```diff\n--- a/main.go\n+++ b/main.go\n@@ -12,5 +12,5 @@ func add(a int, b int) int {\n }\n+// Computes the sum of two integer arguments\n-// add is a simple function that returns the sum of two integers\n func main() {\n```\n" +
-		"For new files, use standard git diff format such as --- /dev/null and +++ b/path/to/file.\n" +
-		"After processing, the system will emit a [diff-report] summary showing which operations succeeded or failed.\n"
+	systemPrompt := ai.SystemPromptGitDiff
 
 	masterReq := ai.NewDefaultChatRequest().WithTools(masterToolRegistry.GetTools())
 	// place the system prompt as the first message

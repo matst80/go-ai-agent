@@ -30,6 +30,8 @@ type Message struct {
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	// ToolCallID is the ID of the tool call this message is responding to (role must be tool)
 	ToolCallID string `json:"tool_call_id,omitempty"`
+	// CreatedAt is the timestamp when the message was created
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // MultimodalToolResult represents a tool result that can include both text and images.
@@ -40,8 +42,9 @@ type MultimodalToolResult struct {
 
 func NewMessage(role MessageRole, content string) *Message {
 	return &Message{
-		Role:    role,
-		Content: content,
+		Role:      role,
+		Content:   content,
+		CreatedAt: time.Now(),
 	}
 }
 
@@ -50,6 +53,7 @@ func NewToolResponseMessage(toolCallID string, content string) *Message {
 		Role:       MessageRoleTool,
 		ToolCallID: toolCallID,
 		Content:    content,
+		CreatedAt:  time.Now(),
 	}
 }
 
@@ -209,8 +213,9 @@ func (r *ChatRequest) AddMessage(role MessageRole, content string) *ChatRequest 
 	// 	log.Printf(" - %s: length: %d", msg.Role, len(msg.Content))
 	// }
 	r.Messages = append(r.Messages, Message{
-		Role:    role,
-		Content: content,
+		Role:      role,
+		Content:   content,
+		CreatedAt: time.Now(),
 	})
 	// fmt.Printf("[ChatRequest] AddMessage: role=%s, content_len=%d, new_history_len=%d\n", role, len(content), len(r.Messages))
 	return r

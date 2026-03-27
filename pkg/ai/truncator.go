@@ -3,6 +3,8 @@ package ai
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -448,4 +450,223 @@ func (s *SummarizeTruncator) isInSlice(target int, slice []int) bool {
 		}
 	}
 	return false
+}
+
+// AgeTruncator removes messages older than MaxAge.
+// It preserves system messages and the last message.
+type AgeTruncator struct {
+	MaxAge    time.Duration
+	Threshold int // Optional: Only truncate if total messages > Threshold
+	Logger    Logger
+}
+
+func NewAgeTruncator(maxAge time.Duration, threshold int, logger Logger) *AgeTruncator {
+	return &AgeTruncator{
+		MaxAge:    maxAge,
+		Threshold: threshold,
+		Logger:    logger,
+	}
+}
+
+func (a *AgeTruncator) Apply(messages []Message) ([]Message, int) {
+	if len(messages) <= a.Threshold {
+		return messages, 0
+	}
+
+	now := time.Now()
+	lastIdx := len(messages) - 1
+	result := make([]Message, 0, len(messages))
+	removed := 0
+
+	for i, msg := range messages {
+		// Always keep system messages and the last message
+		if msg.Role == MessageRoleSystem || i == lastIdx {
+			result = append(result, msg)
+			continue
+		}
+
+		// Check age
+		if !msg.CreatedAt.IsZero() && now.Sub(msg.CreatedAt) > a.MaxAge {
+			removed++
+			if a.Logger != nil {
+				a.Logger.Infof("[AgeTruncator] Removed expired message (age: %v): %s", now.Sub(msg.CreatedAt), truncateContent(msg.Content, 50))
+			}
+			continue
+		}
+
+		result = append(result, msg)
+	}
+
+	return result, removed
+}
+
+// MemoryStore defines the interface for long-term message storage.
+type MemoryStore interface {
+	AddMessages(messages []Message) error
+	RetrieveRelevant(query string, limit int) ([]Message, error)
+}
+
+// InMemoryMemoryStore is a simple implementation for demonstration/testing.
+type InMemoryMemoryStore struct {
+	mu       sync.RWMutex
+	messages []Message
+}
+
+func NewInMemoryMemoryStore() *InMemoryMemoryStore {
+	return &InMemoryMemoryStore{}
+}
+
+func (s *InMemoryMemoryStore) AddMessages(messages []Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messages = append(s.messages, messages...)
+	return nil
+}
+
+func (s *InMemoryMemoryStore) RetrieveRelevant(query string, limit int) ([]Message, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	// Basic implementation: return the last N messages
+	// In a real implementation this would use vector embeddings/search.
+	if len(s.messages) <= limit {
+		return s.messages, nil
+	}
+	return s.messages[len(s.messages)-limit:], nil
+}
+
+// MemoryTruncator wraps a strategy and stores removed messages in a MemoryStore.
+type MemoryTruncator struct {
+	Strategy TruncationStrategy
+	Store    MemoryStore
+	Logger   Logger
+}
+
+func NewMemoryTruncator(strategy TruncationStrategy, store MemoryStore, logger Logger) *MemoryTruncator {
+	return &MemoryTruncator{
+		Strategy: strategy,
+		Store:    store,
+		Logger:   logger,
+	}
+}
+
+func (m *MemoryTruncator) Apply(messages []Message) ([]Message, int) {
+	truncated, removedCount := m.Strategy.Apply(messages)
+	if removedCount == 0 {
+		return messages, 0
+	}
+
+	// Identify what was removed
+	// Since Apply might return a modified slice (e.g. SummarizeTruncator returns a new summary),
+	// we identify removed messages by comparing with the original set.
+	removed := make([]Message, 0, removedCount)
+	for _, orig := range messages {
+		found := false
+		for _, t := range truncated {
+			// Basic heuristic match: Role, Content, and CreatedAt
+			if orig.Role == t.Role && orig.Content == t.Content && orig.CreatedAt.Equal(t.CreatedAt) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			removed = append(removed, orig)
+		}
+	}
+
+	if len(removed) > 0 {
+		if err := m.Store.AddMessages(removed); err != nil && m.Logger != nil {
+			m.Logger.Warnf("[MemoryTruncator] Failed to store truncated messages: %v", err)
+		} else if m.Logger != nil {
+			m.Logger.Infof("[MemoryTruncator] Stored %d truncated messages in memory.", len(removed))
+		}
+	}
+
+	return truncated, removedCount
+}
+
+// CompositeTruncator allows chaining multiple truncation strategies.
+type CompositeTruncator struct {
+	Strategies []TruncationStrategy
+}
+
+func NewCompositeTruncator(strategies ...TruncationStrategy) *CompositeTruncator {
+	return &CompositeTruncator{Strategies: strategies}
+}
+
+func (c *CompositeTruncator) Apply(messages []Message) ([]Message, int) {
+	totalRemoved := 0
+	current := messages
+	for _, s := range c.Strategies {
+		next, removed := s.Apply(current)
+		current = next
+		totalRemoved += removed
+	}
+	return current, totalRemoved
+}
+
+// AutomaticMemoryHook is a session hook that automatically retrieves relevant
+// memories and injects them as a system context message.
+type AutomaticMemoryHook struct {
+	DefaultSessionHooks
+	Store       MemoryStore
+	MaxMemories int
+}
+
+func NewAutomaticMemoryHook(store MemoryStore, maxMemories int) *AutomaticMemoryHook {
+	return &AutomaticMemoryHook{
+		Store:       store,
+		MaxMemories: maxMemories,
+	}
+}
+
+func (h *AutomaticMemoryHook) OnChatRequest(ctx context.Context, req *ChatRequest) error {
+	if len(req.Messages) == 0 {
+		return nil
+	}
+
+	// Use the last user message as a query
+	var query string
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role == MessageRoleUser {
+			query = req.Messages[i].Content
+			break
+		}
+	}
+
+	if query == "" {
+		return nil
+	}
+
+	memories, err := h.Store.RetrieveRelevant(query, h.MaxMemories)
+	if err != nil || len(memories) == 0 {
+		return nil
+	}
+
+	// Format memories into a single context block
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Relevant context from previous conversations:\n")
+	for _, m := range memories {
+		fmt.Fprintf(&sb, "- [%v] %s\n", m.CreatedAt.Format("2006-01-02"), truncateContent(m.Content, 200))
+	}
+
+	// Inject as a system message at the beginning (after the main system prompt if it exists)
+	contextMsg := Message{
+		Role:      MessageRoleSystem,
+		Content:   sb.String(),
+		CreatedAt: time.Now(),
+	}
+
+	// Insert after first system message, or at the beginning
+	insertIdx := 0
+	if len(req.Messages) > 0 && req.Messages[0].Role == MessageRoleSystem {
+		insertIdx = 1
+	}
+
+	newMsgs := make([]Message, 0, len(req.Messages)+1)
+	newMsgs = append(newMsgs, req.Messages[:insertIdx]...)
+	newMsgs = append(newMsgs, contextMsg)
+	newMsgs = append(newMsgs, req.Messages[insertIdx:]...)
+	req.Messages = newMsgs
+
+	return nil
 }

@@ -2,7 +2,10 @@ module github.com/matst80/go-ai-agent
 
 go 1.25.1
 
-require github.com/mark3labs/mcp-go v0.45.0
+require (
+	github.com/mark3labs/mcp-go v0.45.0
+	github.com/sergi/go-diff v1.4.0
+)
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect

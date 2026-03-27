@@ -2,24 +2,22 @@ package ai
 
 // SystemPromptGitDiff is the preferred reusable system prompt. It instructs models to
 // emit fenced `diff` blocks containing exact git unified diffs.
-var SystemPromptGitDiff = "Output machine-actionable file changes using fenced `diff` blocks only. Do not emit surrounding prose when performing edits.\n" +
-	"The contents of each fence must be an exact git unified diff that can be applied with git apply.\n" +
-	"Use this form:\n" +
+var SystemPromptGitDiff = "Output file changes as fenced `diff` blocks. Each block must identify the target file using standard `---` and `+++` headers.\n" +
+	"For modifications, use this form:\n" +
 	"```diff\n" +
 	"--- a/path/to/file\n" +
 	"+++ b/path/to/file\n" +
 	"@@ ...\n" +
 	"...diff content...\n" +
 	"```\n" +
-	"For new files, use standard git diff format, for example:\n" +
+	"The system supports standard unified git diffs and can fuzzily apply \"lazy\" diffs (even those missing `@@` headers) as long as the file path is correct.\n" +
+	"For new files, use `/dev/null` for the source side, for example:\n" +
 	"```diff\n" +
-	"diff --git a/newfile.txt b/newfile.txt\n" +
-	"new file mode 100644\n" +
 	"--- /dev/null\n" +
-	"+++ b/newfile.txt\n" +
-	"@@ -0,0 +1,2 @@\n" +
-	"+first line\n" +
-	"+second line\n" +
+	"+++ b/new-file.txt\n" +
+	"@@ -0,0 +1,1 @@\n" +
+	"+content for the new file\n" +
 	"```\n" +
-	"For deleted files, use standard git diff format with /dev/null on the new side.\n" +
-	"Preserve exact patch text inside the fence. After processing, the system will emit a [diff-report] summary listing which operations succeeded or failed."
+	"You are encouraged to provide explanations and answer questions normally. However, any code change intended to be applied must be in its own `diff` block. " +
+	"TO ENSURE SUCCESSFUL DIFF APPLICATION, ALWAYS READ THE FILE CONTENT FIRST TO ENSURE CONTEXT MATCHES PERFECTLY. " +
+	"After processing, the system will emit a [diff-report] summary of the operations."

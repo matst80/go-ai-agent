@@ -215,6 +215,21 @@ func WithHooks(hooks ...SessionHooks) AgentSessionOption {
 	}
 }
 
+// WithMemory returns an AgentSessionOption that configures a memory store.
+// It automatically adds an AutomaticMemoryHook to retrieve context and,
+// if a truncation strategy is already configured, wraps it in a MemoryTruncator.
+func WithMemory(store MemoryStore, maxMemories int) AgentSessionOption {
+	return func(a *AgentSession) {
+		// Add the retrieval hook
+		a.hooks = append(a.hooks, NewAutomaticMemoryHook(store, maxMemories))
+
+		// If we have a strategy, wrap it so truncated messages are stored
+		if a.truncationConfig != nil && a.truncationConfig.Strategy != nil {
+			a.truncationConfig.Strategy = NewMemoryTruncator(a.truncationConfig.Strategy, store, nil)
+		}
+	}
+}
+
 // Recv returns a receive-only channel for all chat responses across multiple turns.
 func (a *AgentSession) Recv() <-chan AccumulatedResponse {
 	return a.globalChan
@@ -460,6 +475,7 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 				Content:          last.Content,
 				ReasoningContent: last.ReasoningContent,
 				ToolCalls:        last.ToolCalls,
+				CreatedAt:        time.Now(),
 			})
 			a.mu.Unlock()
 
@@ -513,6 +529,31 @@ func (a *AgentSession) streamChat(ctx context.Context) error {
 						Chunk:   &ChatResponse{BaseResponse: &BaseResponse{Done: true}},
 						Content: sb.String(),
 					}
+					for _, h := range a.hooks {
+						h.OnContent(ctx, rep.Content)
+					}
+
+					hasFailure := false
+					for _, r := range reports {
+						if !r.Success {
+							hasFailure = true
+							break
+						}
+					}
+
+					// Feed back to AI history so it knows what happened
+					a.mu.Lock()
+					a.rec.Messages = append(a.rec.Messages, Message{
+						Role:      MessageRoleUser,
+						Content:   sb.String(),
+						CreatedAt: time.Now(),
+					})
+					a.mu.Unlock()
+
+					if hasFailure {
+						go a.streamChat(ctx)
+					}
+
 					select {
 					case a.globalChan <- rep:
 					case <-a.ctx.Done():

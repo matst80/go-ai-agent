@@ -18,7 +18,7 @@ type FenceParser struct {
 
 func NewFenceParser() *FenceParser {
 	return &FenceParser{
-		EmitFragments: true,
+		EmitFragments: false,
 	}
 }
 
@@ -57,14 +57,15 @@ func (p *FenceParser) ParseBlocks(ctx context.Context, res *AccumulatedResponse)
 		bodyAndTail := input[newlineOffset+1:]
 		endOffset := strings.Index(bodyAndTail, "```")
 		if endOffset == -1 {
-			if res.Chunk.Done || p.EmitFragments {
+			isDone := res.Chunk.BaseResponse != nil && res.Chunk.Done
+			if isDone || p.EmitFragments {
 				// Emit fragment (intermediate or final)
 				out = append(out, &StreamedBlock{
 					Type:    header,
 					Content: bodyAndTail,
-					Done:    res.Chunk.Done,
+					Done:    isDone,
 				})
-				if res.Chunk.Done {
+				if isDone {
 					input = ""
 				}
 			}
@@ -72,10 +73,7 @@ func (p *FenceParser) ParseBlocks(ctx context.Context, res *AccumulatedResponse)
 		}
 
 		body := bodyAndTail[:endOffset]
-		// Handle optional newline directly before backticks
-		if len(body) > 0 && body[len(body)-1] == '\n' {
-			body = body[:len(body)-1]
-		}
+// Keep everything inside the fence exactly as is.
 
 		out = append(out, &StreamedBlock{
 			Type:    header,

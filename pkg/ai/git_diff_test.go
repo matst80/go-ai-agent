@@ -109,8 +109,8 @@ func TestGitDiffBlockHandler_FailsForInvalidPatch(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected invalid patch to fail")
 	}
-	if !strings.Contains(err.Error(), "git apply failed") {
-		t.Fatalf("expected git apply failure, got: %v", err)
+	if !strings.Contains(err.Error(), "fuzzy apply failed:") {
+		t.Fatalf("expected fuzzy apply failure for missing file, got: %v", err)
 	}
 }
 
@@ -208,5 +208,45 @@ func TestGitDiffBlockHandler_ProducesReportThroughDiffParser(t *testing.T) {
 	}
 	if reports[0].Op != "diff" {
 		t.Fatalf("expected diff report, got %+v", reports[0])
+	}
+}
+
+func TestDefaultOperationHandler_FuzzyFallback(t *testing.T) {
+	tmp := t.TempDir()
+
+	mainPath := filepath.Join(tmp, "main.go")
+	original := "package main\n\nfunc main() {\n\t// old logic\n}\n"
+	if err := os.WriteFile(mainPath, []byte(original), 0o644); err != nil {
+		t.Fatalf("write seed file failed: %v", err)
+	}
+
+	handler := &DefaultOperationHandler{}
+
+	// Malformed diff (no @@, context changed slightly but fuzzy match should find it)
+	block := &DiffOperation{
+		Content: strings.Join([]string{
+			"--- a/main.go",
+			"+++ b/main.go",
+			"- \t// old logic",
+			"+ \t// new logic",
+		}, "\n"),
+	}
+
+	// git apply will fail because of missing @@ and possibly other malformations
+	res := handler.HandleDiff(context.Background(), tmp, block)
+	if !res.Success {
+		t.Fatalf("Fuzzy apply failed: %s", res.Message)
+	}
+	if !strings.Contains(res.Message, "applied via fuzzy fallback") {
+		t.Fatalf("Expected fuzzy fallback message, got: %s", res.Message)
+	}
+
+	got, err := os.ReadFile(mainPath)
+	if err != nil {
+		t.Fatalf("reading patched file failed: %v", err)
+	}
+
+	if !strings.Contains(string(got), "// new logic") {
+		t.Fatalf("patched file missing new logic in %q", string(got))
 	}
 }
