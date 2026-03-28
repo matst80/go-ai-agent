@@ -250,3 +250,40 @@ func TestDefaultOperationHandler_FuzzyFallback(t *testing.T) {
 		t.Fatalf("patched file missing new logic in %q", string(got))
 	}
 }
+
+func TestGitDiffBlockHandler_CreatesDirectoriesAutomatically(t *testing.T) {
+	tmp := t.TempDir()
+
+	if out, err := exec.Command("git", "-C", tmp, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v: %s", err, string(out))
+	}
+
+	dp := NewDiffParser(tmp)
+	handler := NewGitDiffBlockHandler(dp)
+
+	// Apply diff to a file in a non-existent subdirectory
+	block := &StreamedBlock{
+		Type: "diff",
+		Done: true,
+		Content: strings.Join([]string{
+			"--- a/newdir/nested/file.txt",
+			"+++ b/newdir/nested/file.txt",
+			"@@ -0,0 +1 @@",
+			"+nested content",
+			"",
+		}, "\n"),
+	}
+
+	if err := handler.HandleBlock(context.Background(), block); err != nil {
+		t.Fatalf("HandleBlock failed: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(tmp, "newdir", "nested", "file.txt"))
+	if err != nil {
+		t.Fatalf("reading patched file failed: %v", err)
+	}
+
+	if string(got) != "nested content\n" {
+		t.Fatalf("unexpected content: %q", string(got))
+	}
+}

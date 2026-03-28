@@ -172,8 +172,12 @@ func (d *DefaultOperationHandler) handleFuzzyApply(ctx context.Context, repoRoot
 		absPath := filepath.Join(repoRoot, fh.path)
 		original, err := os.ReadFile(absPath)
 		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s (read error: %v)", fh.path, err))
-			continue
+			if os.IsNotExist(err) {
+				original = []byte("")
+			} else {
+				failures = append(failures, fmt.Sprintf("%s (read error: %v)", fh.path, err))
+				continue
+			}
 		}
 
 		// Prepare patch text: go-diff expects @@ headers.
@@ -223,6 +227,10 @@ func (d *DefaultOperationHandler) handleFuzzyApply(ctx context.Context, repoRoot
 			continue
 		}
 
+		if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+			failures = append(failures, fmt.Sprintf("%s (mkdir error: %v)", fh.path, err))
+			continue
+		}
 		if err := os.WriteFile(absPath, []byte(applied), 0644); err != nil {
 			failures = append(failures, fmt.Sprintf("%s (write error: %v)", fh.path, err))
 			continue
