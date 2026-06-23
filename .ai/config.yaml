@@ -1,0 +1,11 @@
+api:
+  base_url: https://api.openai.com/v1
+  api_key: ""
+
+model: gpt-4o
+
+system_prompt: |
+  You are a helpful assistant that can use tools to help the user.
+  When you need to use a tool, indicate it clearly.
+
+temperature: 0.7
